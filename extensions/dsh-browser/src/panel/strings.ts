@@ -221,6 +221,39 @@ export interface PanelCopy {
     selectionTruncated: string
     removeSelection: string
     scrollToBottom: string
+    permissionControl: string
+    permissionMenu: string
+    permissionReadOnly: string
+    permissionWorkspaceWrite: string
+    permissionFullAccess: string
+    permissionAuto: string
+    permissionCustom: string
+    permissionExperimental: string
+    permissionPendingHint: string
+    permissionDefaultHint: (name: string) => string
+    permissionConfirmTitle: (label: string) => string
+    permissionConfirmBody: (label: string, preset: string) => string
+    permissionConfirmAccept: string
+    permissionConfirmCancel: string
+    permissionSwitchFailed: (reason: string) => string
+    permissionUnavailable: string
+    modelUnavailable: string
+    modelReasoning: string
+    modelReasoningDefault: string
+    retry: string
+    slashMenu: string
+    slashCommands: string
+    slashSkills: string
+    slashLocal: string
+    slashUserOnly: string
+    slashLocalModel: string
+    slashEmpty: string
+    slashProvisional: string
+    unknownCommand: (name: string) => string
+    commandFailed: (reason: string) => string
+    commandSucceeded: string
+    commandProvisional: string
+    commandAttachmentsUnsupported: string
   }
 }
 
@@ -474,6 +507,41 @@ const EN: PanelCopy = {
     selectionTruncated: '(truncated)',
     removeSelection: 'Remove the selected text',
     scrollToBottom: 'Scroll to latest',
+    permissionControl: 'Permission preset',
+    permissionMenu: 'Permission presets',
+    permissionReadOnly: 'Read only',
+    permissionWorkspaceWrite: 'Workspace edits',
+    permissionFullAccess: 'Full access',
+    permissionAuto: 'Auto review',
+    permissionCustom: 'Custom',
+    permissionExperimental: 'EXP',
+    permissionPendingHint: 'Applies when the first message creates this chat',
+    permissionDefaultHint: (name) => `New chats start from ${name}`,
+    permissionConfirmTitle: (label) => `Switch to ${label}?`,
+    permissionConfirmBody: (label, preset) => preset === 'danger-full-access'
+      ? `Full access runs file and command operations without asking for approval. Only continue if you trust this conversation (${label}).`
+      : `Auto review is experimental: a separate reviewer judges each risky call. Only continue if you accept that risk (${label}).`,
+    permissionConfirmAccept: 'Switch',
+    permissionConfirmCancel: 'Cancel',
+    permissionSwitchFailed: (reason) => `Could not switch the permission preset: ${reason}`,
+    permissionUnavailable: 'This dsh host does not expose permission presets',
+    modelUnavailable: 'Could not load the model list',
+    modelReasoning: 'Reasoning effort',
+    modelReasoningDefault: 'Default',
+    retry: 'Retry',
+    slashMenu: 'Commands and skills',
+    slashCommands: 'Commands',
+    slashSkills: 'Skills',
+    slashLocal: 'This panel',
+    slashUserOnly: 'User only',
+    slashLocalModel: 'Choose the model for the next turn',
+    slashEmpty: 'No matching command or skill',
+    slashProvisional: 'Available once the first message creates this chat',
+    unknownCommand: (name) => `/${name} is not a command or skill, so it was not sent. Start the line with a space to send it as text.`,
+    commandFailed: (reason) => `Command failed: ${reason}`,
+    commandSucceeded: 'Command finished',
+    commandProvisional: 'This command needs a real chat: send the first message first',
+    commandAttachmentsUnsupported: 'Commands do not take attachments here. Remove the images or selection, or send the text as a message instead.',
   },
 }
 
@@ -727,6 +795,41 @@ const ZH: PanelCopy = {
     selectionTruncated: '（已截断）',
     removeSelection: '移除选中内容',
     scrollToBottom: '回到最新消息',
+    permissionControl: '权限模式',
+    permissionMenu: '权限模式',
+    permissionReadOnly: '仅可查看',
+    permissionWorkspaceWrite: '工作区内修改',
+    permissionFullAccess: '完全权限',
+    permissionAuto: 'Auto review',
+    permissionCustom: '自定义',
+    permissionExperimental: 'EXP',
+    permissionPendingHint: '发送第一条消息创建会话时生效',
+    permissionDefaultHint: (name) => `新会话默认：${name}`,
+    permissionConfirmTitle: (label) => `切换到「${label}」？`,
+    permissionConfirmBody: (label, preset) => preset === 'danger-full-access'
+      ? `完全权限（${label}）下文件与命令操作不再逐次征求批准。请仅在你信任本对话时继续。`
+      : `Auto review 是实验能力：由独立审查者判断每次风险调用。请确认你接受该风险（${label}）。`,
+    permissionConfirmAccept: '切换',
+    permissionConfirmCancel: '取消',
+    permissionSwitchFailed: (reason) => `切换权限模式失败：${reason}`,
+    permissionUnavailable: '当前 dsh 宿主未提供权限模式',
+    modelUnavailable: '模型列表加载失败',
+    modelReasoning: '推理强度',
+    modelReasoningDefault: '默认',
+    retry: '重试',
+    slashMenu: '命令与 Skill',
+    slashCommands: '命令',
+    slashSkills: 'Skill',
+    slashLocal: '面板自带',
+    slashUserOnly: '仅用户可调用',
+    slashLocalModel: '选择下一轮使用的模型',
+    slashEmpty: '没有匹配的命令或 Skill',
+    slashProvisional: '发送第一条消息创建会话后可用',
+    unknownCommand: (name) => `/${name} 不是命令或 Skill，已阻止发送。若想按普通文本发送，请在行首加一个空格。`,
+    commandFailed: (reason) => `命令执行失败：${reason}`,
+    commandSucceeded: '命令已执行',
+    commandProvisional: '这条命令需要真实会话：请先发送第一条消息',
+    commandAttachmentsUnsupported: '命令不支持附件：请先移除图片或选中内容，或把它作为普通消息发送。',
   },
 }
 

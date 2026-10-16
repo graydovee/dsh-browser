@@ -108,6 +108,14 @@ pnpm --filter dsh-browser-extension run test
 
 如果只开发扩展，Chrome 从 `chrome://extensions` 加载 `extensions/dsh-browser/dist/`；Firefox 运行 `build:firefox` 后，从 `about:debugging#/runtime/this-firefox` 加载 `extensions/dsh-browser/dist-firefox/manifest.json`。代码更新后需重新构建并重新加载。
 
+## 输入区控制：权限模式、模型、命令与 Skill
+
+输入区提供与 Web GUI 对齐的控件，全部由桥插件自有的 Host 方法支撑：
+
+- **权限模式**（左侧 chip）：部署的预设表（`read-only`、`workspace-write`、`danger-full-access`，实验 Auto integration 挂载时还有 `auto`）加上当前会话的取值。选择预设会执行宿主自己的 `/permission <preset>` 命令，因此 `permission/preset` 选择与两个旋钮事件都会像 Web GUI 选择一样写入会话日志。「完全权限」与「Auto review」会先要求显式确认；推导态 `custom` 只作展示、不可选；菜单底部提示新会话的默认值。首次发送消息创建会话之前，选择会被记住，并在 materialize 时、第一条提示词准入之前应用。
+- **模型与推理强度**（右侧 chip）：按 provider 分组的模型目录，以及当前模型声明的推理强度（含「默认」）。选择只影响**下一轮**装配，因此回合运行中 chip 依然可用。目录读取失败时该行会说明原因并提供重试，而不是静默变灰；漏掉的 `turn/end` 会在面板下次变为可见时按宿主的 `running` 标记纠正。
+- **`/` 选单**：在空行输入 `/` 会打开宿主命令目录（`/compact`、`/permission`、`/plan`、`/goal`、`/feedback`、`/export` 等）与该会话的用户可调用 skill，其中包含标记为 `modelInvocable: false` 的 skill（带「仅用户可调用」角标）——它们正是为显式调用而存在。`↑`/`↓` 移动、`Enter`/`Tab` 接受、`Esc` 关闭；选中某行会插入其确切文本，方便继续补参数。提交时面板按与宿主适配器一致的规则裁决：命令名走 `commands.execute`（其输出永远不会变成模型消息），skill 名按字面文本发送（由宿主注入 skill 正文），无法识别的 `/…` 行会被**拒绝**且草稿保留——若想按普通文本发送，请在行首加一个空格。命令不支持附件；临时会话（尚未创建）的命令/skill 目录在第一条消息创建会话前返回空。
+
 ## 为什么浏览器操作仍采用纯文本
 
 - **快照即视图**：模型对页面的全部认知 = 结构化文本（标题/URL/正文/编号元素/表单），默认预算 32k 字符（插件可配，经 `hello.ok` 协商给扩展）。
