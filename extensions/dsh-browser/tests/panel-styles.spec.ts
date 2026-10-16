@@ -22,17 +22,38 @@ describe('panel layout styles', () => {
     expect(settingsChildrenRule).toMatch(/(?:^|\n)\s*flex-shrink:\s*0;/)
   })
 
-  it('places an upward model menu on its own row under the composer', () => {
+  it('places the composer control chips on their own row with upward menus', () => {
     const styles = readFileSync(`${process.cwd()}/src/panel/styles.css`, 'utf8')
-    const modelRule = styles.match(/\.composer-model\s*\{([^}]*)\}/)?.[1]
+    const controlsRule = styles.match(/\.composer-controls\s*\{([^}]*)\}/)?.[1]
+    const chipRule = styles.match(/\.composer-model,\s*\n\.composer-chip\s*\{([^}]*)\}/)?.[1]
     const menuRule = styles.match(/\.composer-model-menu\s*\{([^}]*)\}/)?.[1]
+    const chipMenuRule = styles.match(/\.composer-chip-menu\s*\{([^}]*)\}/)?.[1]
 
-    expect(modelRule).toBeDefined()
-    expect(modelRule).toMatch(/(?:^|\n)\s*position:\s*relative;/)
-    expect(modelRule).toMatch(/(?:^|\n)\s*margin-top:\s*8px;/)
+    // The chip row sits under the composer box and wraps on a narrow panel.
+    expect(controlsRule).toBeDefined()
+    expect(controlsRule).toMatch(/(?:^|\n)\s*display:\s*flex;/)
+    expect(controlsRule).toMatch(/(?:^|\n)\s*flex-wrap:\s*wrap;/)
+    expect(controlsRule).toMatch(/(?:^|\n)\s*margin-top:\s*8px;/)
+    expect(chipRule).toBeDefined()
+    expect(chipRule).toMatch(/(?:^|\n)\s*position:\s*relative;/)
     expect(menuRule).toBeDefined()
     expect(menuRule).toMatch(/(?:^|\n)\s*position:\s*absolute;/)
     expect(menuRule).toMatch(/(?:^|\n)\s*bottom:\s*calc\(100% \+ 6px\);/)
+    expect(chipMenuRule).toBeDefined()
+    expect(chipMenuRule).toMatch(/(?:^|\n)\s*position:\s*absolute;/)
+    expect(chipMenuRule).toMatch(/(?:^|\n)\s*bottom:\s*calc\(100% \+ 6px\);/)
+  })
+
+  it('renders the slash menu inside the composer shell so it can point upward', () => {
+    const styles = readFileSync(`${process.cwd()}/src/panel/styles.css`, 'utf8')
+    const composerRule = styles.match(/\.composer\s*\{([^}]*)\}/)?.[1]
+    const slashRule = styles.match(/\.slash-menu\s*\{([^}]*)\}/)?.[1]
+
+    expect(composerRule).toBeDefined()
+    expect(composerRule).toMatch(/(?:^|\n)\s*position:\s*relative;/)
+    expect(slashRule).toBeDefined()
+    expect(slashRule).toMatch(/(?:^|\n)\s*position:\s*absolute;/)
+    expect(slashRule).toMatch(/(?:^|\n)\s*overscroll-behavior:\s*contain;/)
   })
 
   it('renders the developer-tools state inside its own switch, not as a row', () => {

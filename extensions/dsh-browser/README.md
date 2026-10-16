@@ -6,6 +6,8 @@ The **browser-operation end** of dsh: the model reads and operates the browser p
 
 **Two explicit channels**: browser pages are still rendered as structured text (a numbered interactive-element inventory), so browser tools never take screenshots. Separately, a dsh 0.1.2 host can advertise multimodal image limits; the side panel then accepts PNG, JPEG, WebP, and GIF attachments and renders their durable history references.
 
+Release-by-release code changes are recorded in the repository [CHANGELOG.md](../../CHANGELOG.md).
+
 ## What the model can do
 
 | Capability | Action | Notes |
@@ -107,6 +109,42 @@ The recommended zero-configuration command does not require Git or a local clone
 Pages that were already open before extension installation or reload are instrumented automatically on the first action, so they do not require a manual refresh. Browser-internal and protected pages such as `chrome://` and the Chrome Web Store expose only tab metadata and browser-level HTTP(S) navigation, back, forward, and reload; their DOM cannot be read or operated.
 
 For extension-only development, load `extensions/dsh-browser/dist/` from `chrome://extensions`, or run `build:firefox` and load `extensions/dsh-browser/dist-firefox/manifest.json` from `about:debugging#/runtime/this-firefox`. Rebuild and reload after code changes.
+
+## Composer controls: permission, model, commands, and skills
+
+The composer carries the same controls the Web GUI exposes, backed by Host
+methods the bridge owns:
+
+- **Permission preset** (left chip): the deployment's preset table
+  (`read-only`, `workspace-write`, `danger-full-access`, plus `auto` when the
+  experimental Auto integration is mounted) with the Session's current value.
+  Selecting a preset runs the Host's own `/permission <preset>` command, so the
+  `permission/preset` selection and both knob events land in the Session log
+  exactly as a Web GUI selection would. `Full access` and `Auto review` ask for
+  an explicit confirmation first; a derived `custom` state is shown but never
+  selectable, and the menu footnotes the default for future chats. Before the
+  first message creates the chat, the choice is remembered and applied at
+  materialization, before that first prompt is admitted.
+- **Model and reasoning effort** (right chip): the Session's model directory
+  grouped by provider, plus the reasoning efforts the selected model declares
+  (`Default` included). A selection only shapes the **next** assembled turn, so
+  the chip stays usable while a turn is running. When the directory cannot be
+  read, the row says why and offers a retry instead of going silently grey; a
+  missed `turn/end` is repaired from the Host's `running` flag the next time the
+  panel becomes visible.
+- **`/` menu**: typing `/` in an empty line opens the Host command directory
+  (`/compact`, `/permission`, `/plan`, `/goal`, `/feedback`, `/export`, …) and
+  the Session's user-invocable skills, including skills marked
+  `modelInvocable: false` (badged `User only`) that exist precisely for explicit
+  invocation. `↑`/`↓` move, `Enter`/`Tab` accept, `Esc` closes; picking a row
+  inserts its exact text so its input stays editable. On submit the panel
+  arbitrates exactly like the Host adapter: a command name runs through
+  `commands.execute` (its output never becomes a model message), a skill name is
+  sent as a literal prompt so the Host injects its instructions, and an
+  unrecognized `/…` line is **refused** with the draft preserved — start the
+  line with a space to send it as ordinary text. Commands take no attachments
+  here, and neither is a provisional chat's directory browsable: it answers
+  empty until the first message creates the real Session.
 
 ## Why browser operation stays text-only
 

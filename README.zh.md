@@ -73,6 +73,8 @@ scripts/install.sh
 scripts/install.ps1
 ```
 
+逐版本的代码改动记录在[更新日志 CHANGELOG.zh-CN.md](CHANGELOG.zh-CN.md)（[English](CHANGELOG.md)）。
+
 ## 为什么这样设计
 
 - **使用你的真实浏览器，而不是无头副本**：模型操作你已经打开的页面，登录态、会话和 Cookie 均会保留。

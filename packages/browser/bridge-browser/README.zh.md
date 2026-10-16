@@ -6,6 +6,8 @@ dsh 的**浏览器操作桥**：在宿主 webserver 上挂载一个 **token 认�
 
 **纯文本浏览器工具，多模态对话透传**：页面快照仍是结构化文本（标题、正文、带编号的交互清单、敏感值打码的表单字段），所有浏览器动作按稳定编号寻址。通用 RPC 通道也会透传 dsh 0.2.0 的图片消息和持久附件读取；延迟创建的新会话只在宿主确实挂载附件服务时声明图片限制。
 
+逐版本的用户可见变化记录在[更新日志 ../../../CHANGELOG.zh-CN.md](../../../CHANGELOG.zh-CN.md)。
+
 ## 配置
 
 | 键 | 类型 | 默认 | 说明 |
@@ -45,6 +47,25 @@ npx @deepseek-ai/dsh@0.2.0-rc.2 web
 ```
 
 安装器会把已解压扩展复制到 `~/.dsh/browser-extension` 并打开 `chrome://extensions`。在 Chrome 中加载这个稳定目录，然后使用侧边栏。扩展会自动发现回环连接，无需输入 token；非回环部署仍需要配置的 bearer token。
+
+## 面板驱动的 Host 方法
+
+除了纯网关透传（`rpc`），适配器还组合了侧栏需要的若干 Host 方法。它们是面板操作输入区权限/模型/命令/Skill 的唯一词汇，且从不会作为工具暴露给模型。
+
+| 面板方法 | payload | 宿主侧工作 | 结果 |
+|---|---|---|---|
+| `permission.catalog` | `{}` | `permissionPresets/catalog` | `{ options, defaultOptions, defaultPreset }` |
+| `session.permissions` | `{ sessionId }` | 目录 + 该会话的 `permissions` 投影 | `{ current, defaultPreset, options, defaultOptions, routable, provisional }` |
+| `session.setPermission` | `{ sessionId, preset }` | 校验预设后执行 `commands/execute` 的 `/permission <preset>` | `{ preset, commandId, result }` |
+| `commands.list` | `{ sessionId }` | 以会话 agent 为作用域的 `commands/list` | `{ commands: [{ name, description, hint?, definitionId? }], provisional }` |
+| `commands.execute` | `{ sessionId, line }` | 附件列表为空的 `commands/execute` | `{ commandId, result }`；未知命令行返回 `bad-request` |
+| `skills.list` | `{ sessionId }` | 该会话组合的 `skills/list` | `{ skills: [{ name, description, whenToUse?, modelInvocable, path? }], provisional }` |
+
+失败语义：未挂载权限服务的宿主会让 `session.permissions` 返回 `routable: false` 而不是报错，面板据此隐藏控件；部署的桥未实现某方法时返回 `not-found`（`… is unavailable`），使较新的面板可以降级而不是崩掉。`commands.execute` 会拒绝不符合宿主命令语法的行，宿主返回的未知命令名会被报告为 `bad-request`，而不是空成功。
+
+## 延后创建（deferred Sessions）
+
+`deferSessionCreate`（默认 `true`）让 `session.create` 返回临时 id，并在第一条 `session.prompt` 时才真正创建会话。输入区方法遵循这一点：临时 id 的 `session.permissions` 用进程目录加已记住的选择作答，`session.setPermission` 记录该选择，materialize 时在模型选择之前、第一条提示词准入之前重放 `/permission <preset>`（失败会让该提示词留在队列中重试，而不是在错误的策略下运行）。`commands.list` 与 `skills.list` 需要真实 agent，因此临时 id 返回空并带 `provisional: true`；`commands.execute` 只接受权限切换，其余返回 `provisional-session`。
 
 ## 安全模型
 
