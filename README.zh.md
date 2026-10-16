@@ -1,5 +1,7 @@
 # dsh 浏览器操作
 
+![Runtime compatibility](https://github.com/graydovee/dsh-browser/actions/workflows/runtime.yml/badge.svg)
+
 [English](README.md) | **中文**
 
 > [!NOTE]
