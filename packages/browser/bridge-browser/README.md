@@ -46,6 +46,43 @@ npx @deepseek-ai/dsh@0.2.0-rc.2 web
 
 The installer copies the unpacked extension to `~/.dsh/browser-extension` and opens `chrome://extensions`. Load that stable directory in Chrome and use the side panel. Loopback connections are discovered automatically and require no token entry; non-loopback deployments still require the configured bearer token.
 
+## Host methods the panel drives
+
+Beyond plain gateway passthrough (`rpc`), the adapter composes a few Host
+methods the side panel needs. They are the panel's only vocabulary for the
+composer's permission, model, command, and skill controls, and they are never
+offered to the model as tools.
+
+| Panel method | Payload | Host work | Result |
+|---|---|---|---|
+| `permission.catalog` | `{}` | `permissionPresets/catalog` | `{ options, defaultOptions, defaultPreset }` |
+| `session.permissions` | `{ sessionId }` | the catalog plus the Session's `permissions` projection | `{ current, defaultPreset, options, defaultOptions, routable, provisional }` |
+| `session.setPermission` | `{ sessionId, preset }` | validates the preset, then `commands/execute` with `/permission <preset>` | `{ preset, commandId, result }` |
+| `commands.list` | `{ sessionId }` | `commands/list` scoped to the Session's agent | `{ commands: [{ name, description, hint?, definitionId? }], provisional }` |
+| `commands.execute` | `{ sessionId, line }` | `commands/execute` with the empty attachment list | `{ commandId, result }`; an unknown line is a `bad-request` |
+| `skills.list` | `{ sessionId }` | `skills/list` for the Session composition | `{ skills: [{ name, description, whenToUse?, modelInvocable, path? }], provisional }` |
+
+Failure semantics: a Host that does not mount the permission service answers
+`session.permissions` with `routable: false` instead of failing, so the panel
+can hide the control; a method the deployed bridge does not implement answers
+`not-found` (`… is unavailable`), which lets a newer panel degrade instead of
+breaking. `commands.execute` refuses a line without the Host command grammar,
+and an unknown command name from the Host is reported as `bad-request` rather
+than an empty success.
+
+## Deferred Sessions
+
+`deferSessionCreate` (default `true`) answers `session.create` with a
+provisional id and materializes the real Session on the first `session.prompt`.
+Composer methods respect that: a provisional id answers `session.permissions`
+from the process catalog plus the remembered choice, `session.setPermission`
+records the choice, and materialization replays `/permission <preset>` before
+the model selection and before the first prompt is admitted (a failure keeps
+the prompt queued for retry instead of running it under the wrong policy).
+`commands.list` and `skills.list` need a real agent, so a provisional id
+answers empty with `provisional: true`; `commands.execute` accepts only the
+permission switch and answers `provisional-session` for everything else.
+
 ## Security model
 
 - The bridge route lives **outside** the `/api` trust fence (which only guards client-connection's routes), so it carries its own bearer-token authentication: the first frame must be `hello` with the token within 5s, verified in constant time. Failed auth closes the socket.

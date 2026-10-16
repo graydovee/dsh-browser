@@ -129,18 +129,25 @@ async function start(reopen) {
   }
   socket.send(JSON.stringify({ t: 'hello', token, caps: { textOnly: true, snapshotMaxChars: 32_000, maxInteractiveItems: 60 } }))
   await frame(value => value.t === 'hello.ok')
-  return async (method, payload) => {
+  async function send(method, payload) {
     const id = randomUUID()
     socket.send(JSON.stringify({ t: 'rpc', id, method, payload }))
     const result = await frame(value => value.t === 'rpc.result' && value.id === id)
     assert.equal(result.ok, true, JSON.stringify(result))
     if (method === BRIDGE_INJECT_BROWSER_SNAPSHOT_METHOD) {
       assert.deepEqual(result.result, { accepted: true })
-      return result.result
+      return { ok: true, value: result.result }
     }
-    assert.equal(result.result?.result?.ok, true, JSON.stringify(result))
-    return result.result.result.value
+    return result.result?.result
   }
+  const rpc = async (method, payload) => {
+    const envelope = await send(method, payload)
+    assert.equal(envelope?.ok, true, JSON.stringify(envelope))
+    return envelope.value
+  }
+  // Business failures are part of the contract, so the smoke also reads raw envelopes.
+  rpc.raw = (method, payload) => send(method, payload)
+  return rpc
 }
 
 async function observation() {
@@ -187,6 +194,7 @@ try {
   assert.ok(migrated.events.some(({ event }) => event.type === 'system/message'), 'V2 migration must insert the V3 system head')
   assert.equal(migrated.events.find(({ event }) => event.type === 'user/message')?.event.data.content[0].text, 'Saved browser conversation')
   assert.deepEqual(await readFile(legacyFile), legacyBytes, 'migration must preserve the original V2 log')
+
   await stop()
   rpc = await start(true)
   assert.equal((await observation()).source, 'prepared')
@@ -207,7 +215,49 @@ try {
   // append seed/permission metadata. The migrated history prefix stays exact.
   assert.deepEqual(reopenedLegacy.events.slice(0, migrated.events.length), migrated.events)
   assert.deepEqual(await readFile(legacyFile), legacyBytes)
-  console.log('Real DSH smoke passed: discovery, token authentication, create/list/history, Session model selection, V2 migration, V4 browser snapshots, and prepared projections after restart')
+  // Composer controls: the panel reaches the Host permission preset table and
+  // its slash-command/skill directories through bridge-owned Host methods.
+  const presetCatalog = await rpc('permission.catalog', {})
+  const presetValues = presetCatalog.options.map(option => option.value)
+  assert.ok(presetValues.includes('read-only'), 'the catalog must expose read-only')
+  assert.ok(presetValues.includes('workspace-write'), 'the catalog must expose workspace-write')
+  assert.ok(presetValues.includes('danger-full-access'), 'the catalog must expose danger-full-access')
+  assert.equal(typeof presetCatalog.defaultPreset, 'string')
+  assert.ok(presetValues.includes(presetCatalog.defaultPreset), 'the default must be a selectable preset')
+  assert.ok(presetCatalog.options.every(option => typeof option.name === 'string' && option.name !== ''))
+
+  const initialPermissions = await rpc('session.permissions', { sessionId })
+  assert.equal(initialPermissions.routable, true)
+  assert.equal(initialPermissions.provisional, false)
+  assert.equal(initialPermissions.current, presetCatalog.defaultPreset)
+  assert.deepEqual(initialPermissions.options, presetCatalog.options)
+
+  const commandNames = (await rpc('commands.list', { sessionId })).commands.map(command => command.name)
+  assert.ok(commandNames.includes('permission'), `the command directory must expose /permission: ${JSON.stringify(commandNames)}`)
+  assert.ok(commandNames.includes('plan'), `the command directory must expose /plan: ${JSON.stringify(commandNames)}`)
+
+  const permissionCommand = await rpc('commands.execute', { sessionId, line: '/permission read-only' })
+  assert.equal(permissionCommand.result.kind, 'success')
+  assert.equal((await rpc('session.permissions', { sessionId })).current, 'read-only')
+  await rpc('session.setPermission', { sessionId, preset: 'danger-full-access' })
+  assert.equal((await rpc('session.permissions', { sessionId })).current, 'danger-full-access')
+  await rpc('session.setPermission', { sessionId, preset: presetCatalog.defaultPreset })
+  assert.equal((await rpc('session.permissions', { sessionId })).current, presetCatalog.defaultPreset)
+
+  const unknownCommand = await rpc.raw('commands.execute', { sessionId, line: '/definitely-not-a-command' })
+  assert.equal(unknownCommand.ok, false, JSON.stringify(unknownCommand))
+  assert.equal(unknownCommand.error.code, 'bad-request')
+  const unknownPreset = await rpc.raw('session.setPermission', { sessionId, preset: 'custom' })
+  assert.equal(unknownPreset.ok, false, JSON.stringify(unknownPreset))
+  assert.equal(unknownPreset.error.code, 'bad-request')
+
+  const skillDirectory = await rpc('skills.list', { sessionId })
+  assert.ok(Array.isArray(skillDirectory.skills))
+  assert.ok(skillDirectory.skills.every(skill => (
+    typeof skill.name === 'string' && skill.name !== '' && typeof skill.modelInvocable === 'boolean'
+  )))
+
+  console.log('Real DSH smoke passed: discovery, token authentication, create/list/history, Session model selection, permission presets, Host commands and skills, V2 migration, V4 browser snapshots, and prepared projections after restart')
   succeeded = true
 } catch (error) {
   console.error(hostLog)
