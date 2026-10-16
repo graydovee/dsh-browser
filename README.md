@@ -73,6 +73,8 @@ scripts/install.sh
 scripts/install.ps1
 ```
 
+Release-by-release code changes are recorded in [CHANGELOG.md](CHANGELOG.md) ([中文](CHANGELOG.zh-CN.md)).
+
 ## Why this design
 
 - **Your real browser, not a headless copy**: the model works in the page you already have open, retaining logins, sessions, and cookies.

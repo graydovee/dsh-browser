@@ -6,6 +6,8 @@ The **browser-operation end** of dsh: the model reads and operates the browser p
 
 **Two explicit channels**: browser pages are still rendered as structured text (a numbered interactive-element inventory), so browser tools never take screenshots. Separately, a dsh 0.1.2 host can advertise multimodal image limits; the side panel then accepts PNG, JPEG, WebP, and GIF attachments and renders their durable history references.
 
+Release-by-release code changes are recorded in the repository [CHANGELOG.md](../../CHANGELOG.md).
+
 ## What the model can do
 
 | Capability | Action | Notes |

@@ -6,6 +6,8 @@ The **browser-operation bridge** for dsh: mounts a token-authenticated WebSocket
 
 **Text-only browser tools, multimodal chat passthrough**: page snapshots stay structured text (title, main content, numbered interactive inventory, and masked form fields), and every browser action uses stable inventory numbers. The generic RPC carrier also passes dsh 0.2.0 image prompts and durable attachment reads; deferred new sessions expose image limits only when the host actually mounts the attachment service.
 
+User-visible changes per release are recorded in [../../../CHANGELOG.md](../../../CHANGELOG.md).
+
 ## Config
 
 | Key | Type | Default | Description |

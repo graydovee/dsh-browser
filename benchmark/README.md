@@ -7,6 +7,8 @@
 
 评测目标是比较“模型收到同一个任务后，到 DSH turn 完整结束”的真实耗时和成功率。它不是只测一次 `click()` 的微基准。
 
+逐版本的用户可见变化记录在[更新日志 ../CHANGELOG.zh-CN.md](../CHANGELOG.zh-CN.md)。
+
 ## 快速开始
 
 先从仓库根目录安装与 lockfile 中 `playwright-core` 匹配的 Chrome for Testing、构建当前代码并检查运行矩阵：
