@@ -1,16 +1,16 @@
 /**
  * Release checks for the unpacked browser extension.
  *
- * The managed installer follows the repository's main branch, so that
- * branch's manifest is the update source of truth. The check is deliberately
- * read-only: Chrome does not let an unpacked extension replace itself.
+ * The managed installer follows this fork's main branch, so that branch's
+ * manifest is the update source of truth. The check is deliberately read-only:
+ * Chrome does not let an unpacked extension replace itself.
  */
 
 export const UPDATE_MANIFEST_URL =
-  'https://raw.githubusercontent.com/Lum1104/dsh-browser/refs/heads/main/extensions/dsh-browser/manifest.json'
+  'https://raw.githubusercontent.com/graydovee/dsh-browser/refs/heads/main/extensions/dsh-browser/manifest.json'
 
 export const UPDATE_COMMAND =
-  'curl -fsSL https://raw.githubusercontent.com/Lum1104/dsh-browser/refs/heads/main/scripts/install.sh | bash'
+  'curl -fsSL https://raw.githubusercontent.com/graydovee/dsh-browser/refs/heads/main/scripts/install.sh | bash'
 
 /**
  * install.ps1 carries a UTF-8 BOM so Windows PowerShell renders its Chinese half, and a
@@ -18,7 +18,7 @@ export const UPDATE_COMMAND =
  */
 export const WINDOWS_UPDATE_COMMAND =
   '$s="$env:TEMP\\dsh-install.ps1"; '
-  + 'irm https://raw.githubusercontent.com/Lum1104/dsh-browser/refs/heads/main/scripts/install.ps1 -OutFile $s; '
+  + 'irm https://raw.githubusercontent.com/graydovee/dsh-browser/refs/heads/main/scripts/install.ps1 -OutFile $s; '
   + 'powershell -NoProfile -ExecutionPolicy Bypass -File $s'
 
 export interface ExtensionUpdateResult {
