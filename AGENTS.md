@@ -2,7 +2,11 @@
 
 ## 仓库关系与 fork 现状
 
-本仓库是上游的 fork：`fork` → <https://github.com/graydovee/dsh-browser>，`origin` → 上游 <https://github.com/omdsh-dev/dsh-browser>（旧地址 `Lum1104/dsh-browser` 会 301 过来，是同一个仓库）。
+本仓库是上游 <https://github.com/omdsh-dev/dsh-browser> 的 fork，fork 地址 <https://github.com/graydovee/dsh-browser>（上游旧地址 `Lum1104/dsh-browser` 会 301 过来，是同一个仓库）。
+
+- 本文统一用「上游」指 `omdsh-dev/dsh-browser`（源仓库）、「fork」指 `graydovee/dsh-browser`；**不与本地 remote 的命名绑定**。
+- 判断远端归属看 URL、不看名字：用 `git remote -v` 或 `git remote get-url <name>` 确认——URL 指向 `graydovee/dsh-browser` 的是 fork 远端，指向 `omdsh-dev/dsh-browser` 的是上游远端。不同 checkout 里它们可能叫 `origin`、`upstream`、`fork` 的任意组合，不要假设 `origin` 指向哪一边。
+- 动手前先确认这两条通路已具备：能 fetch 上游 `main`（跟随上游用）、能 push 到 fork（发 PR 用）；缺哪条就按 URL 补 `git remote add`，而不是改这里的描述。
 
 上游现状（2026-10-17 核对）：
 
@@ -52,7 +56,8 @@ pnpm run test                           # 桥插件 + 扩展的 vitest
 pnpm run build                          # 构建桥插件与 Chrome 扩展产物
 pnpm --filter dsh-browser-extension run build:firefox
 node scripts/smoke-runtime.mjs          # 真机冒烟：临时 DSH_HOME 启动 dsh web，走真实桥协议
-bash scripts/install.sh                 # 安装/升级：构建并复制到 ~/.dsh/browser-extension
+bash scripts/install.sh                 # 安装/升级（macOS/Linux）：构建并复制到 ~/.dsh/browser-extension
+powershell scripts/install.ps1          # 安装/升级（Windows）：同上，两个脚本行为需保持一致
 ```
 
 桥插件契约或 wire 帧有改动时，`pnpm run test` 之外必须跑一次 `node scripts/smoke-runtime.mjs`；它用真实 dsh 校验扩展依赖的每个 Host 方法与失败语义。
@@ -104,6 +109,6 @@ bash scripts/install.sh                 # 安装/升级：构建并复制到 ~/.
 ## Deployment & Release Safety
 
 - 不要提交 token、凭据、真实主机地址：`~/.dsh/ext-bridge-token`、profile 配置、`install-info.json` 都属本地状态。
-- `scripts/install.sh` 会构建产物、把桥插件 link 进 `web` profile，并 rsync 到 `~/.dsh/browser-extension`；改动安装流程前先在本地跑通一次完整安装。
+- `scripts/install.sh`（macOS/Linux）与 `scripts/install.ps1`（Windows）会构建产物、把桥插件 link 进 `web` profile，并同步到 `~/.dsh/browser-extension`；改动安装流程前先在本机跑通一次完整安装，且两边行为保持一致。
 - 生效边界：桥插件改动需要重启对应 dsh 进程（`dsh web` 或 DSH Desktop），扩展改动需要在 `chrome://extensions` 重新加载；只重载扩展不会更新已在内存中运行的桥插件。
 - 部署后可用桥探测或 `node scripts/smoke-runtime.mjs` 确认新方法已就绪，再交付给用户。
