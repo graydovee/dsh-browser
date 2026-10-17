@@ -1,5 +1,30 @@
 # Repository Guidelines
 
+## 仓库关系与 fork 现状
+
+本仓库是上游的 fork：`fork` → <https://github.com/graydovee/dsh-browser>，`origin` → 上游 <https://github.com/omdsh-dev/dsh-browser>（旧地址 `Lum1104/dsh-browser` 会 301 过来，是同一个仓库）。
+
+上游现状（2026-10-17 核对）：
+
+- `main` 最后一次提交 2026-10-01；最后一个 release v0.1.3（2026-09-04）。
+- 9 个 PR 待合入（最早的一个自 2026-09-16 起），13 个 issue 未关闭。
+
+因此本 fork 暂时承担维护：扩展的更新检查与安装脚本指向本 fork（`extensions/dsh-browser/src/panel/updates.ts`、`scripts/install.*`），版本号推进到 v0.1.5。这些属于 fork 专有接线，**不进入对上游的 PR**。
+
+### `omdsh-dev/dsh-browser` 分支的作用
+
+这条分支是本仓库对上游 `omdsh-dev/dsh-browser` 的**唯一 PR 承载分支**（命名即目标仓库，方便识别 PR 去向）：
+
+- 只放**产品改动**：`extensions/` 与 `packages/` 的源码、测试、以及新功能的使用文档；`CHANGELOG*`、`AGENTS.md`、fork 的发布/更新源接线、CI runner 钉版、版本号 bump 都不进来。
+- 一律**一个 PR、一条分支**：功能分支按《分支与合入流程》合入这里，再统一进 PR；不要为不同功能另开对上游的 PR。
+- **不要删除、改名或强推**：它是 PR #121 的 head（`graydovee:omdsh-dev/dsh-browser`）。需要重整时在上面追加提交。
+
+### 当前的 issue 与 PR
+
+- Issue：<https://github.com/omdsh-dev/dsh-browser/issues/120> —— 维护说明（上游停更期间在 fork 维护，功能整合为一个 PR，可随时合回主线）。
+- PR：<https://github.com/omdsh-dev/dsh-browser/pull/121> —— `feat: 浏览器桥接新增开发者工具、视口截图与输入区控件`；base `omdsh-dev/dsh-browser:main` ← head `graydovee:omdsh-dev/dsh-browser`；59 文件 / +9522 −130。
+- 该 PR 是"活"的：后续每次功能更新推到同一分支，并在 PR 内回复一条评论追加 changelog 条目；issue #120 只作线索，不堆内容。
+
 ## Project Structure & Module Organization
 
 `dsh-browser` 是一个 pnpm workspace，由浏览器扩展、dsh 桥插件与安装脚本三部分组成，改动应留在各自所属目录内：
