@@ -32,12 +32,15 @@ import { createBrowserToolCall, registerBrowserTools } from './tools.ts'
 import { registerScreenshotTool } from './screenshot-tools.ts'
 import { registerBrowserDevTools } from './devtools-tools.ts'
 import {
+  BEACON_PORTS,
   BRIDGE_CONFIG_PATH,
   BRIDGE_PATH,
+  bridgeConfigPayload,
   DEFAULT_SNAPSHOT_MAX_CHARS,
   DEVTOOLS_CAPS_VERSION,
   MIN_SNAPSHOT_MAX_CHARS,
 } from './protocol.ts'
+import { isLoopbackBindAddress, startDiscoveryBeacon, type DiscoveryBeacon } from './discovery-beacon.ts'
 import { withSessionDeferral } from './session-deferral.ts'
 import { withSessionWorkspace } from './session-workspace.ts'
 import { purgeSessionFiles, type SessionPurgeDeps } from './session-purge.ts'
@@ -73,6 +76,12 @@ const SESSIONS_ROOT = dshHomePath('sessions')
 /** Default: sessions materialize only on the first message (open-and-close leaves no trace). */
 const DEFAULT_DEFER_SESSION_CREATE = true
 
+/** Default: advertise a fixed-port discovery beacon so a random host port stays discoverable. */
+const DEFAULT_BEACON = true
+
+/** Instance metadata the discovery endpoints advertise for the extension's picker. */
+const INSTANCE_INFO = { pid: process.pid, startedAt: new Date().toISOString() }
+
 /** Plugin config: deployment-varying tunables only; the wire contract stays fixed. */
 export interface Config {
   /** Fixed bearer token. When absent, a token is generated on first boot and persisted under the dsh home (0600). */
@@ -89,6 +98,14 @@ export interface Config {
   sessionWorkspacePath?: string
   /** Defer real session creation until the first prompt. Defaults to true. */
   deferSessionCreate?: boolean
+  /**
+   * Advertise a fixed-port discovery beacon on loopback. Defaults to true:
+   * DSH Desktop assigns a random port, so without a beacon the extension can
+   * only find this host by scanning the ephemeral range.
+   */
+  beacon?: boolean
+  /** Candidate beacon ports, tried in order. Defaults to {@link BEACON_PORTS}. */
+  beaconPorts?: number[]
 }
 
 export const Config: z<Config> = z.object({
@@ -99,6 +116,8 @@ export const Config: z<Config> = z.object({
   devToolsMaxChars: z.number().step(1).min(MIN_SNAPSHOT_MAX_CHARS).default(DEFAULT_DEVTOOLS_MAX_CHARS),
   sessionWorkspacePath: z.string().default(DEFAULT_SESSION_WORKSPACE_PATH),
   deferSessionCreate: z.boolean().default(DEFAULT_DEFER_SESSION_CREATE),
+  beacon: z.boolean().default(DEFAULT_BEACON),
+  beaconPorts: z.array(z.number().step(1).min(1).max(65535)).default([...BEACON_PORTS]),
 })
 
 /** The shape after schemastery applies its defaults to every field. */
@@ -125,6 +144,16 @@ export function resolveConfig(config: Config): ResolvedConfig {
     devToolsMaxChars: config.devToolsMaxChars ?? DEFAULT_DEVTOOLS_MAX_CHARS,
     sessionWorkspacePath: config.sessionWorkspacePath ?? DEFAULT_SESSION_WORKSPACE_PATH,
     deferSessionCreate: config.deferSessionCreate ?? DEFAULT_DEFER_SESSION_CREATE,
+    beacon: config.beacon ?? DEFAULT_BEACON,
+    beaconPorts: [...(config.beaconPorts ?? BEACON_PORTS)],
+  }
+  if (resolved.beacon && resolved.beaconPorts.length === 0) {
+    throw new Error('bridge-browser: beaconPorts must name at least one port when the beacon is enabled')
+  }
+  for (const port of resolved.beaconPorts) {
+    if (!Number.isInteger(port) || port < 1 || port > 65535) {
+      throw new Error(`bridge-browser: beaconPorts must contain integers from 1 through 65535, got ${String(port)}`)
+    }
   }
   assertPositiveInteger('toolTimeoutMs', resolved.toolTimeoutMs)
   assertPositiveInteger('snapshotMaxChars', resolved.snapshotMaxChars)
@@ -256,16 +285,35 @@ function mountBridge(
   // Zero-config discovery endpoint: the extension fetches this to learn the
   // bridge WebSocket URL without any manual configuration. The URL carries no
   // secret (loopback connections skip the token); non-loopback deployments
-  // keep requiring the token on the WS itself.
+  // keep requiring the token on the WS itself. `pid`/`startedAt` let the
+  // extension tell several local instances apart without any extra endpoint.
+  const hostPort = (): number | undefined => {
+    const port = ctx.webServer.port
+    return typeof port === 'number' ? port : undefined
+  }
   const configRoute: WebRoute = {
     kind: 'exact',
     path: BRIDGE_CONFIG_PATH,
     handler: (_req, res) => {
-      res.writeHead(200, { 'content-type': 'application/json' })
-      res.end(JSON.stringify({ wsUrl: `ws://127.0.0.1:${ctx.webServer.port}${BRIDGE_PATH}` }))
+      const port = hostPort()
+      if (port === undefined) {
+        res.writeHead(503)
+        res.end()
+        return
+      }
+      const body = JSON.stringify(bridgeConfigPayload(port, INSTANCE_INFO))
+      res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' })
+      res.end(body)
     },
   }
   ctx.effect(() => ctx.webServer.register(configRoute), 'bridge-browser: /ext/bridge-config route')
+
+  // DSH Desktop starts the host with `--port 0`, so the Web port is different
+  // on every launch. A beacon on the first free BEACON_PORTS port advertises
+  // the real URL, which keeps discovery to a bounded probe list. Remote
+  // deployments bind a concrete interface address and are skipped: their
+  // clients cannot use a 127.0.0.1 answer anyway.
+  mountDiscoveryBeacon(ctx, resolved, hostPort)
 
   ctx.effect(() => {
     const disposers = registerBrowserTools(ctx, server, {
@@ -337,6 +385,60 @@ function mountBridge(
       : `browser bridge: using token from ${tokenRes.file}`,
   )
   ctx.logger.info(`browser bridge: listening on ${BRIDGE_PATH}`)
+}
+
+/**
+ * Advertise the bridge on a fixed loopback port so the extension can find a
+ * randomly assigned Web port (DSH Desktop passes `--port 0`).
+ *
+ * The effect owns the beacon's lifetime: HMR and unload close it, so a reloaded
+ * plugin never leaks a listening socket. Binding failures are diagnostics only —
+ * the bridge itself is unaffected, and the extension still has the scan path.
+ * @param ctx - Cordis context owning the effect.
+ * @param resolved - validated plugin configuration.
+ * @param hostPort - getter for the port the host webserver actually bound.
+ */
+function mountDiscoveryBeacon(
+  ctx: Context,
+  resolved: ResolvedConfig,
+  hostPort: () => number | undefined,
+): void {
+  if (!resolved.beacon) {
+    ctx.logger.info('browser bridge: discovery beacon disabled by configuration')
+    return
+  }
+  if (!isLoopbackBindAddress(ctx.webServer.host)) {
+    ctx.logger.info(`browser bridge: discovery beacon skipped; the host binds ${ctx.webServer.host}, which is not loopback`)
+    return
+  }
+  ctx.effect(() => {
+    let beacon: DiscoveryBeacon | undefined
+    let disposed = false
+    const warn = (message: string): void => { ctx.logger.warn(message) }
+    void startDiscoveryBeacon({
+      hostPort,
+      ports: resolved.beaconPorts,
+      info: INSTANCE_INFO,
+      warn,
+    }).then((started) => {
+      if (started === undefined) return
+      // A disposal that raced the asynchronous bind still has to release the port.
+      if (disposed) {
+        void started.close()
+        return
+      }
+      beacon = started
+      ctx.logger.info(`browser bridge: discovery beacon on http://127.0.0.1:${String(started.port)}${BRIDGE_CONFIG_PATH}`)
+    }, (error: unknown) => {
+      warn(`browser bridge: discovery beacon failed: ${error instanceof Error ? error.message : String(error)}`)
+    })
+    return () => {
+      disposed = true
+      const bound = beacon
+      beacon = undefined
+      return bound?.close()
+    }
+  }, 'bridge-browser: discovery beacon')
 }
 
 type GatewayCandidate = Pick<TypertGatewayLike, 'invoke'> & {

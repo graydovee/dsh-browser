@@ -148,7 +148,8 @@ Local Chrome use requires no configuration; Firefox requires the local bridge to
 
 - Make sure dsh web is running locally (default `http://127.0.0.1:3080`).
 - Verify the bridge is loaded: open `http://127.0.0.1:3080/ext/bridge-config`. It should return JSON such as `{"wsUrl":"ws://127.0.0.1:3080/ext/bridge"}`. If it returns a web page instead of JSON, the running dsh predates the bridge registration — restart dsh and refresh the page; the extension reconnects on its own.
-- The extension probes ports 3080, 3081, 3090, and 14389 automatically. If dsh runs on another port — or you use a remote `--host 0.0.0.0` deployment — set the address (and bridge token) in the panel settings. Firefox always requires the token.
+- Discovery runs once when the panel opens. A filled-in address is tried first; if a **loopback** address does not answer, the panel makes one automatic pass (last working URL → `dsh web` defaults → the plugin's fixed beacon ports 43189–43198 → one sweep of the platform's ephemeral port range). When that pass finds nothing the status reads **No service found** and nothing retries until you reopen the panel or press **Detect**.
+- DSH Desktop assigns a random local Web port on every launch, which is why the bridge plugin also listens on a fixed loopback beacon port. If the panel cannot find it, open **Settings → Detect** to list every local instance and click the one to use; the address can still be typed by hand. Remote `--host` deployments need the address and token filled in manually; Firefox always requires the token.
 
 ## Development
 
