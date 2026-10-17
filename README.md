@@ -4,6 +4,7 @@
 
 > [!NOTE]
 > This is the **graydovee fork** of [Lum1104/dsh-browser](https://github.com/Lum1104/dsh-browser), keeping the upstream code and its MIT licence. It adds what only this fork ships: permission, model, and `/`-command controls in the side panel, an opt-in developer-tools group, viewport screenshots, and image attachments in the panel.
+> This fork also tracks the current DSH plugin interfaces: the bridge declares `engines.dsh: ^0.2.1-rc.2` and is verified against dsh 0.2.1-rc.2.
 > Fork changes are recorded in [CHANGELOG.md](CHANGELOG.md) with its [Chinese edition](CHANGELOG.zh-CN.md). Upstream publishes no changelog, so compare the upstream side against [its commit history](https://github.com/Lum1104/dsh-browser/commits/main) or [its tags](https://github.com/Lum1104/dsh-browser/tags).
 
 <img width="1701" height="897" alt="dsh Browser Control" src="https://github.com/user-attachments/assets/3b1f3a25-f962-4e02-a9ef-d23e0d01fc8e" />
@@ -15,7 +16,7 @@ Connect [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) to t
 Browser operation remains text-only: pages become structured text with a numbered inventory of interactive elements, and the model addresses those elements by number. dsh 0.2 multimodal chat is separate from that page channel—the side panel accepts PNG, JPEG, WebP, and GIF attachments when the host advertises image support, while browser tools still never capture screenshots.
 
 > [!IMPORTANT]
-> The workspace pins dsh 0.2.1-rc.2, the minimum supported runtime. Older DSH releases are not supported.
+> **Runtime compatibility:** this release is adapted to and verified against **dsh 0.2.1-rc.2**. The workspace pins that release, the bridge plugin declares `engines.dsh: ^0.2.1-rc.2`, and older DSH releases are not supported.
 
 ## Quick install
 
@@ -140,7 +141,7 @@ Start the managed installation with:
 cd ~/.dsh/dsh-browser && pnpm start
 ```
 
-From a source checkout, run `pnpm start` in the repository root. The exact supported public runtime is:
+From a source checkout, run `pnpm start` in the repository root. This release is adapted to and tested against the following DSH runtime:
 
 ```sh
 npx @deepseek-ai/dsh@0.2.1-rc.2 web

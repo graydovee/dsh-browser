@@ -40,7 +40,7 @@ cd $HOME\.dsh\dsh-browser; pnpm start
 
 开发者也可以 clone 仓库，在 checkout 中依次运行 `./scripts/install.sh` 和 `pnpm start`。本地模式直接使用当前分支，不会下载或覆盖源码。两种安装模式都会注册同一个 profile bundle；构建工具只从选定的 workspace 解析，绝不读取父 checkout 或父目录的 `node_modules`。
 
-当前工作区固定使用 dsh 0.2.1-rc.2，也是最低支持版本；不再支持旧版 DSH：
+本版本已适配并以 dsh 0.2.1-rc.2 实测通过；不再支持更老的 DSH 版本：
 
 ```sh
 npx @deepseek-ai/dsh@0.2.1-rc.2 web

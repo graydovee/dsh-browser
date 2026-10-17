@@ -4,6 +4,7 @@
 
 > [!NOTE]
 > 本仓库是 [Lum1104/dsh-browser](https://github.com/Lum1104/dsh-browser) 的 **graydovee fork**，沿用上游代码与其 MIT 许可。只在本 fork 提供的能力：侧栏的权限模式 / 模型 / `/` 命令与 skill 控件、可选的开发者工具组、视口截图，以及侧栏图片附件。
+> 本 fork 同时跟随当前 DSH 插件接口：桥插件声明 `engines.dsh: ^0.2.1-rc.2`，并以 dsh 0.2.1-rc.2 实测通过。
 > 本 fork 的改动记录在[更新日志 CHANGELOG.zh-CN.md](CHANGELOG.zh-CN.md)（[English](CHANGELOG.md)）。上游没有 changelog，想对比上游请查[提交历史](https://github.com/Lum1104/dsh-browser/commits/main)或[上游 tag](https://github.com/Lum1104/dsh-browser/tags)。
 
 <img width="1701" height="897" alt="dsh 浏览器操作" src="https://github.com/user-attachments/assets/3b1f3a25-f962-4e02-a9ef-d23e0d01fc8e" />
@@ -15,7 +16,7 @@
 浏览器操作仍采用纯文本设计：页面会转换为结构化文本和带编号的交互元素清单，模型通过编号定位元素。dsh 0.2 的多模态对话走独立通道——宿主声明图片能力时，侧栏可发送 PNG、JPEG、WebP 和 GIF；浏览器工具本身仍不会截取页面截图。
 
 > [!IMPORTANT]
-> 当前工作区固定使用 dsh 0.2.1-rc.2，也是最低支持版本；不再支持旧版 DSH。
+> **运行时兼容性**：本版本已适配并以 **dsh 0.2.1-rc.2** 实测通过。工作区固定该版本，桥插件清单声明 `engines.dsh: ^0.2.1-rc.2`；不再支持更老的 DSH 版本。
 
 ## 快速安装
 
@@ -140,7 +141,7 @@ pnpm --filter dsh-browser-extension run build:firefox
 cd ~/.dsh/dsh-browser && pnpm start
 ```
 
-使用源码 checkout 时，请在仓库根目录运行 `pnpm start`。受支持的精确公开版本为：
+使用源码 checkout 时，请在仓库根目录运行 `pnpm start`。本版本已适配并以如下 DSH 运行时实测通过：
 
 ```sh
 npx @deepseek-ai/dsh@0.2.1-rc.2 web
