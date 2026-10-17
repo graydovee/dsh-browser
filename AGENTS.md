@@ -87,10 +87,14 @@ powershell scripts/install.ps1          # 安装/升级（Windows）：同上，
 
 1. **开新分支开发**：从 `main` 切出新分支做功能开发（`feat/…` / `fix/…`），不要直接在 `main` 上改。
 2. **合入 `omdsh-dev/dsh-browser` 分支**：功能完成、`pnpm typecheck && pnpm test` 通过后，把功能分支合入 `omdsh-dev/dsh-browser`。这条分支是对上游 `omdsh-dev/dsh-browser` 的 PR 承载分支（PR #121），只带产品改动——源码、测试、文档；`CHANGELOG`、`AGENTS.md`、fork 的发布/更新源接线、版本号 bump 都不进这条分支。
-3. **修改 changelog**：合入 `omdsh-dev/dsh-browser` 之后更新 changelog——在该分支对应的 PR 里回复追加条目，同时同步 `main` 上的 `CHANGELOG.md` / `CHANGELOG.zh-CN.md`。
+3. **同步 PR 的描述与评论**（每次合入都必须做，漏了视同没合入）：
+   - **描述里追加 changelog 条目**：PR 描述是"changelog 摘要"的汇总，一条 changelog 对应一行，最新合入的排在前面；描述只写摘要，不写实现细节。
+   - **一条独立评论详述该功能**：在 PR 里发一条评论，用固定结构写清这个功能——`概述 / 动机 / 改动内容 / 测试 / 影响范围`（中英双语小标题）。评论按合入时间正序排列，一条评论对应一条 changelog，后续功能依次往下追加，不改写已有评论。
+   - 同时同步 `main` 上的 `CHANGELOG.md` / `CHANGELOG.zh-CN.md`（写法见《CHANGELOG 规则》）。
 4. **合入 `main`（即 master）**：changelog 定稿后，再把 `omdsh-dev/dsh-browser` 合入 `main`。`main` 是本地发布与 `main` 分支跟随上游的基准，不要跳过第 3 步直接合。
 
 - `omdsh-dev/dsh-browser` 不要删除、改名或强推：它是 PR 的 head 分支；需要重整提交时改为在上面追加提交。
+- PR 的标题不列举具体功能（功能会持续增加，列不完），只说明性质与维护方式；具体功能由描述里的 changelog 摘要与逐条评论承载。
 - 上游恢复维护、PR 合入后，把上游 `main` 合回本仓库 `main`，`omdsh-dev/dsh-browser` 分支再按下一轮功能重新积攒。
 
 ### CHANGELOG 规则
