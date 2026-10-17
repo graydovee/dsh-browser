@@ -2,7 +2,7 @@
 
 **English** | [中文](CHANGELOG.zh-CN.md)
 
-## latest
+## v0.1.6
 * 2026-10-17 [Fix] Work with dsh 0.2.1: the plugin loads and runs on the new release again, the plugin page shows its own title, description, and icon, and the page snapshot taken when you follow a tab survives a dsh restart instead of being discarded.
 
 ## v0.1.5
