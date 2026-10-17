@@ -46,10 +46,50 @@ interface SettingsResultMessage {
   error?: { message?: unknown }
 }
 
+/** Discovery state the background reports alongside the transport state. */
+export type DiscoveryStatus = 'idle' | 'running' | 'found' | 'not-found'
+
+/** Where one discovered instance came from. */
+export type BridgeInstanceSource = 'fixed' | 'beacon' | 'scan'
+
+/** One local dsh instance the background found. */
+export interface BridgeInstance {
+  wsUrl: string
+  port: number
+  sources: BridgeInstanceSource[]
+  pid?: number
+  startedAt?: string
+}
+
+/** Sweep progress of one manual scan. */
+export interface DiscoveryProgress {
+  done: number
+  total: number
+  instances: BridgeInstance[]
+}
+
 interface StatusMessage {
   type: 'status'
   state: BridgeState
   caps: BridgeCaps | null
+  discovery?: DiscoveryStatus
+  address?: string
+}
+
+interface DiscoveryProgressMessage {
+  type: 'discovery.progress'
+  id: string
+  done: number
+  total: number
+  instances: BridgeInstance[]
+}
+
+interface DiscoveryResultMessage {
+  type: 'discovery.result'
+  id: string
+  ok: boolean
+  instances?: BridgeInstance[]
+  error?: { code?: unknown; message?: unknown }
 }
 
 interface EventMessage {
@@ -109,7 +149,7 @@ interface DevToolsDetachResultMessage {
   error?: { message?: unknown }
 }
 
-type BackgroundMessage = RpcResultMessage | RespondResultMessage | SettingsResultMessage | StatusMessage | EventMessage | ApprovalRequestMessage | ApprovalResolvedMessage | TabAffinityMessage | TabAffinityRebindResultMessage | SelectionMessage | SessionResumeHintMessage | DevToolsStatusMessage | DevToolsDetachResultMessage
+type BackgroundMessage = RpcResultMessage | RespondResultMessage | SettingsResultMessage | StatusMessage | EventMessage | ApprovalRequestMessage | ApprovalResolvedMessage | TabAffinityMessage | TabAffinityRebindResultMessage | SelectionMessage | SessionResumeHintMessage | DevToolsStatusMessage | DevToolsDetachResultMessage | DiscoveryProgressMessage | DiscoveryResultMessage
 
 /** Structured gateway failure retained for product-level error handling. */
 export class PanelRpcError extends Error {
@@ -135,7 +175,7 @@ function panelRpcError(failure: RpcFailurePayload | undefined, fallbackMessage: 
 export interface PanelApi {
   rpc<T = unknown>(method: string, payload?: unknown): Promise<T>
   respond(rpcId: string, result: RespondResult): Promise<unknown>
-  onStatus(callback: (state: BridgeState, caps: BridgeCaps | null) => void): () => void
+  onStatus(callback: (state: BridgeState, caps: BridgeCaps | null, discovery: DiscoveryStatus, address?: string) => void): () => void
   onEvent(callback: (frame: ServerFrame) => void): () => void
   onApprovalRequest(callback: (request: ApprovalRequest) => void): () => void
   onApprovalResolved(callback: (id: string) => void): () => void
@@ -150,6 +190,11 @@ export interface PanelApi {
   rebindTabAffinity(): Promise<void>
   /** Clear all selection state, or only the exact selection supplied. */
   clearSelection(selection?: PageSelection): Promise<void>
+  /** Enumerate every local dsh instance; progress streams through {@link onDiscoveryProgress}. */
+  startDiscovery(): Promise<BridgeInstance[]>
+  /** Abort a running scan; the pending {@link startDiscovery} rejects as cancelled. */
+  cancelDiscovery(): Promise<void>
+  onDiscoveryProgress(callback: (progress: DiscoveryProgress) => void): () => void
   /** Scope this panel's selections to its own browser window. */
   registerWindow(windowId: number): Promise<void>
   setActiveSession(sessionId: string, isNew?: boolean): Promise<void>
@@ -173,7 +218,9 @@ export function connectPanel(): PanelApi {
     resolve: () => void
     reject: (error: Error) => void
   }>()
-  const statusListeners = new Set<(state: BridgeState, caps: BridgeCaps | null) => void>()
+  const statusListeners = new Set<(state: BridgeState, caps: BridgeCaps | null, discovery: DiscoveryStatus, address?: string) => void>()
+  const discoveryProgressListeners = new Set<(progress: DiscoveryProgress) => void>()
+  const pendingScans = new Map<string, { resolve: (instances: BridgeInstance[]) => void; reject: (error: Error) => void }>()
   const eventListeners = new Set<(frame: ServerFrame) => void>()
   const approvalListeners = new Set<(request: ApprovalRequest) => void>()
   const approvalResolvedListeners = new Set<(id: string) => void>()
@@ -227,8 +274,33 @@ export function connectPanel(): PanelApi {
         break
       }
       case 'status':
-        for (const listener of statusListeners) listener(msg.state, msg.caps)
+        for (const listener of statusListeners) {
+          listener(
+            msg.state,
+            msg.caps,
+            msg.discovery ?? 'idle',
+            typeof msg.address === 'string' ? msg.address : undefined,
+          )
+        }
         break
+      case 'discovery.progress':
+        for (const listener of discoveryProgressListeners) {
+          listener({ done: msg.done, total: msg.total, instances: msg.instances })
+        }
+        break
+      case 'discovery.result': {
+        const entry = pendingScans.get(msg.id)
+        if (entry === undefined) return
+        pendingScans.delete(msg.id)
+        if (msg.ok) entry.resolve(msg.instances ?? [])
+        else entry.reject(new PanelRpcError(
+          typeof msg.error?.code === 'string' ? msg.error.code : 'scan-failed',
+          typeof msg.error?.message === 'string'
+            ? msg.error.message
+            : (getUiLocale() === 'zh' ? '自动检测失败' : 'Detection failed'),
+        ))
+        break
+      }
       case 'event':
         for (const listener of eventListeners) listener(msg.frame)
         break
@@ -286,7 +358,7 @@ export function connectPanel(): PanelApi {
     return cause instanceof Error ? cause : new Error(fallback)
   }
 
-  function failAll(error: Error, preserve?: { kind: 'rpc' | 'respond' | 'rebind' | 'settings' | 'devtools'; id: string }): void {
+  function failAll(error: Error, preserve?: { kind: 'rpc' | 'respond' | 'rebind' | 'settings' | 'devtools' | 'scan'; id: string }): void {
     for (const [id, entry] of pending) {
       if (preserve?.kind === 'rpc' && preserve.id === id) continue
       entry.reject(error)
@@ -312,6 +384,11 @@ export function connectPanel(): PanelApi {
       if (preserve?.kind === 'devtools' && preserve.id === id) continue
       entry.reject(error)
       pendingDetaches.delete(id)
+    }
+    for (const [id, entry] of pendingScans) {
+      if (preserve?.kind === 'scan' && preserve.id === id) continue
+      entry.reject(error)
+      pendingScans.delete(id)
     }
   }
 
@@ -347,7 +424,7 @@ export function connectPanel(): PanelApi {
   function invalidate(
     stale: chrome.runtime.Port,
     error: Error,
-    preserve?: { kind: 'rpc' | 'respond' | 'rebind' | 'settings' | 'devtools'; id: string },
+    preserve?: { kind: 'rpc' | 'respond' | 'rebind' | 'settings' | 'devtools' | 'scan'; id: string },
   ): void {
     if (port !== stale) return
     port = null
@@ -362,7 +439,7 @@ export function connectPanel(): PanelApi {
    */
   function send(
     message: unknown,
-    preserve?: { kind: 'rpc' | 'respond' | 'rebind' | 'settings' | 'devtools'; id: string },
+    preserve?: { kind: 'rpc' | 'respond' | 'rebind' | 'settings' | 'devtools' | 'scan'; id: string },
   ): Promise<void> {
     const current = port
     if (current !== null) {
@@ -521,6 +598,28 @@ export function connectPanel(): PanelApi {
     },
     requestStatus() {
       return send({ type: 'request-status' })
+    },
+    startDiscovery() {
+      const id = crypto.randomUUID()
+      return new Promise<BridgeInstance[]>((resolve, reject) => {
+        const entry = { resolve, reject }
+        pendingScans.set(id, entry)
+        void send(
+          { type: 'discovery.start', id },
+          { kind: 'scan', id },
+        ).catch((cause: unknown) => {
+          if (pendingScans.get(id) !== entry) return
+          pendingScans.delete(id)
+          reject(connectionError(cause))
+        })
+      })
+    },
+    cancelDiscovery() {
+      return send({ type: 'discovery.cancel' })
+    },
+    onDiscoveryProgress(callback) {
+      discoveryProgressListeners.add(callback)
+      return () => { discoveryProgressListeners.delete(callback) }
     },
   }
 }

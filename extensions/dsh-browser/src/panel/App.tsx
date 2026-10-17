@@ -13,7 +13,7 @@ import type { BridgeCaps } from '@yuxianglin/dsh-bridge-browser/src/protocol.ts'
 import type { ServerFrame } from '@yuxianglin/dsh-bridge-browser/src/protocol.ts'
 import type { BridgeState } from '../background/bridge.ts'
 import type { AffinityTab, TabAffinityDecision, TabAffinityState } from '../background/tab-affinity.ts'
-import { connectPanel, PanelRpcError, type DevToolsStatus, type PanelApi, type PanelSettings } from './api.ts'
+import { connectPanel, PanelRpcError, type BridgeInstance, type DevToolsStatus, type DiscoveryStatus, type PanelApi, type PanelSettings } from './api.ts'
 import { renderMarkdown } from './markdown.ts'
 import whaleUrl from '../../assets/icons/deepseek-256.png'
 import type { ApprovalDecision, ApprovalRequest } from '../security/approval.ts'
@@ -924,15 +924,55 @@ export function App(): React.JSX.Element {
   const [devToolsStatus, setDevToolsStatus] = useState<DevToolsStatus | null>(null)
   useEffect(() => api.onDevToolsStatus(setDevToolsStatus), [api])
 
+  // Discovery state reported by the background. 'not-found' is terminal for the
+  // current panel lease, so the status chip can say so instead of "未连接".
+  const [discovery, setDiscovery] = useState<DiscoveryStatus>('idle')
+  const [bridgeAddress, setBridgeAddress] = useState<string | null>(null)
+  // Manual scan from the settings page: the only writer of this list.
+  const [detecting, setDetecting] = useState(false)
+  const [detected, setDetected] = useState<BridgeInstance[]>([])
+  const [detectAttempted, setDetectAttempted] = useState(false)
+  const [detectProgress, setDetectProgress] = useState<{ done: number; total: number } | null>(null)
+  const [detectError, setDetectError] = useState<string | null>(null)
+
+  useEffect(() => api.onDiscoveryProgress((progress) => {
+    setDetectProgress({ done: progress.done, total: progress.total })
+    setDetected(progress.instances)
+  }), [api])
+
+  const runDetection = async (): Promise<void> => {
+    if (detecting) {
+      await api.cancelDiscovery().catch(() => {})
+      return
+    }
+    setDetecting(true)
+    setDetectError(null)
+    setDetected([])
+    setDetectProgress(null)
+    try {
+      setDetected(await api.startDiscovery())
+    } catch (cause) {
+      // Cancellation is a user action, not an error worth showing.
+      if (cause instanceof PanelRpcError && cause.code === 'cancelled') return
+      setDetectError(cause instanceof Error ? cause.message : String(cause))
+    } finally {
+      setDetectAttempted(true)
+      setDetecting(false)
+      setDetectProgress(null)
+    }
+  }
+
   // 每次连接重启（连接配置变更/断线重连）都新建会话。状态消息逐条监听：
   // React 会把 stopped/connecting 等瞬时状态合并进同一帧渲染，依赖渲染
   // 状态无法可靠观察到"连接已重置"，因此在这里按消息粒度判定。
   const [sessionEpoch, setSessionEpoch] = useState(0)
   const lastStateRef = useRef<BridgeState | null>(null)
   useEffect(() => {
-    const offStatus = api.onStatus((next, nextCaps) => {
+    const offStatus = api.onStatus((next, nextCaps, nextDiscovery, nextAddress) => {
       setState(next)
       setCaps(nextCaps)
+      setDiscovery(nextDiscovery)
+      setBridgeAddress(nextAddress ?? null)
       const previous = lastStateRef.current
       lastStateRef.current = next
       if (previous !== null && next !== previous && next === 'stopped') {
@@ -2351,7 +2391,10 @@ export function App(): React.JSX.Element {
   }
 
   // 状态栏只显示连接状态；快照上限是技术细节，在设置页说明（见 hint）。
-  const statusText = copy.status[state]
+  // Discovery can end in a confirmed miss; that is more useful than "未连接".
+  const statusText = state === 'stopped' && discovery === 'not-found'
+    ? copy.statusNotFound
+    : copy.status[state]
   const sessionMenuTitle = sessionTitle ?? copy.app.newSession
   const currentModelOption = sessionModels?.options.find((option) => (
     option.provider === sessionModels.current?.provider
@@ -2474,6 +2517,52 @@ export function App(): React.JSX.Element {
               placeholder={copy.settings.bridgePlaceholder}
             />
           </label>
+          <div className="bridge-detection">
+            <div className="bridge-detection-actions">
+              <button
+                type="button"
+                className="secondary"
+                onClick={() => { void runDetection() }}
+              >
+                {detecting ? copy.settings.detectCancel : copy.settings.detect}
+              </button>
+              <small>
+                {detectProgress === null
+                  ? copy.settings.detectHelp
+                  : copy.settings.detectScanning(detectProgress.done, detectProgress.total)}
+              </small>
+            </div>
+            {detectError === null ? null : <small className="settings-error">{detectError}</small>}
+            {detected.length > 0 ? (
+              <ul className="device-list">
+                {detected.map((instance) => {
+                  const current = bridgeAddress === instance.wsUrl
+                  return (
+                    <li key={instance.wsUrl}>
+                      <button
+                        type="button"
+                        className={current ? 'device-row current' : 'device-row'}
+                        title={copy.settings.detectPick}
+                        onClick={() => setSettings((prev) => prev === null ? prev : { ...prev, bridgeUrl: instance.wsUrl })}
+                      >
+                        <span className="device-address">{instance.wsUrl}</span>
+                        <span className="device-meta">
+                          {instance.sources.map((source) => copy.settings.detectSource[source]).join(' · ')}
+                          {instance.pid === undefined ? '' : ` · PID ${instance.pid}`}
+                          {current ? ` · ${copy.settings.detectCurrent}` : ''}
+                        </span>
+                      </button>
+                    </li>
+                  )
+                })}
+              </ul>
+            ) : detectAttempted && !detecting ? (
+              <small className="settings-error">{copy.settings.detectEmpty}</small>
+            ) : null}
+            {bridgeAddress === null || state !== 'connected'
+              ? null
+              : <small className="device-connected">{copy.settings.detectConnected(bridgeAddress)}</small>}
+          </div>
           <label>
             <span>Token</span>
             <small>{copy.settings.tokenHelp}</small>

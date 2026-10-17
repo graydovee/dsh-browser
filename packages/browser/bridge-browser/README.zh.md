@@ -19,6 +19,8 @@ dsh 的**浏览器操作桥**：在宿主 webserver 上挂载一个 **token 认�
 | `devToolsMaxChars` | `number` | 24000 | 单次开发者工具结果渲染字符上限，最小为 500。 |
 | `sessionWorkspacePath` | `string` | `~/.dsh/browser-sessions` | 扩展创建的会话所用的专用 Host Workspace。插件会在首次调用未显式指定工作区的 `session.create` 时创建并幂等注册该目录；会话的 cwd 随之变为此路径，因此 GUI 会显示 `browser-sessions` 工作区分组。设为 `""` 可让会话继续显示在“未分组”中。 |
 | `deferSessionCreate` | `boolean` | `true` | 会话只在第一条消息时才真正创建：`session.create` 先返回一个内存暂定 ID（不落库），历史读取为空，第一次 `session.prompt` 才创建真实会话（同一 ID、回放原始创建参数）。只打开面板不说话，会在会话库/GUI 里不留任何痕迹。 |
+| `beacon` | `boolean` | `true` | 同时在固定的回环信标端口上回答发现端点，让随机分配的 Web 端口（DSH Desktop 用 `--port 0` 启动 Host）保持可发现。绑定失败只记诊断，不影响桥本身。 |
+| `beaconPorts` | `number[]` | `43189…43198` | 候选信标端口，按序尝试直到绑定成功；取第一个空闲端口，多个本地实例因此都能被发现。`beacon` 为 false 时忽略。 |
 
 工作区分组采用尽力而为方式。如果组合没有 workspace 域、目录创建失败，或 `workspace.create` 拒绝该路径，插件会记录一条警告，并在不注入工作区的情况下发送所有会话创建请求，因此浏览器聊天仍可使用。
 
@@ -74,6 +76,7 @@ npx @deepseek-ai/dsh@0.2.1-rc.2 web
 - 桥路径在 `/api` 信任栅栏**之外**（栅栏只罩 client-connection 注册的路由），因此自带 bearer token 认证：首帧必须是 `hello`（5 秒内），常量时间比对，失败即断开。
 - `/api` 载体钉在回环上的方法（`settings.*`、`credentials.*`、`host.pickDirectory`、`host.openPath`）对非回环来源**即使 token 正确也拒绝**——对 `--host 0.0.0.0` 部署的纵深防御。
 - 同一时刻仅一个活动连接，新认证连接顶替旧连接。
+- 发现信标（固定回环端口上的 `/ext/bridge-config`）只给出桥地址、宿主 pid 与启动时间：只绑 `127.0.0.1`，不发任何 CORS 头（网页能看到连接但读不到内容），对不是 `127.0.0.1`/`localhost:<该端口>` 的 `Host` 头返回 403（防 DNS rebinding），且从不携带 bearer token。宿主绑定非回环地址时整个信标被跳过。
 - 桥是 confused-deputy 边界而非通用认证层：不要把 `dsh web --host 0.0.0.0` 暴露在不信任的网络上。
 - 抽取的页面文字会标记为模型的不可信输入。页面读取遵循扩展的询问/自动/关闭策略；状态变更工具必须经过按 origin 的侧边栏决策，没有侧边栏时失败关闭。同源后续操作可只在当前侧栏会话中临时信任，永久信任仍需显式设置。
 

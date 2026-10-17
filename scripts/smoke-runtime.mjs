@@ -17,7 +17,9 @@ const expectedVersion = JSON.parse(await readFile(join(root, 'package.json'), 'u
 const cli = join(dirname(require.resolve('@deepseek-ai/dsh/package.json')), 'lib/bin.js')
 const bridgeRequire = createRequire(join(bridge, 'package.json'))
 const { default: WebSocket } = await import(pathToFileURL(bridgeRequire.resolve('ws')).href)
-const { BRIDGE_INJECT_BROWSER_SNAPSHOT_METHOD } = await import(pathToFileURL(join(bridge, 'lib/protocol.js')).href)
+const { BRIDGE_INJECT_BROWSER_SNAPSHOT_METHOD, BEACON_PORTS, BRIDGE_CONFIG_PATH } = await import(
+  pathToFileURL(join(bridge, 'lib/protocol.js')).href
+)
 const temp = await mkdtemp(join(tmpdir(), 'dsh-runtime-smoke-'))
 const home = join(temp, 'home')
 const marker = join(temp, 'observation.json')
@@ -112,6 +114,26 @@ async function start(reopen) {
   assert.equal(response.status, 200)
   const config = await response.json()
   assert.equal(config.wsUrl, base.replace('http:', 'ws:') + '/ext/bridge')
+  // The host boots with `--port 0` exactly like DSH Desktop, so the fixed-port
+  // discovery beacon is what lets the extension find this run. Its answer must
+  // name the same single bridge URL, and it must not expose anything else.
+  const beacon = await (async () => {
+    for (const port of BEACON_PORTS) {
+      try {
+        const probe = await fetch(`http://127.0.0.1:${port}${BRIDGE_CONFIG_PATH}`, { signal: AbortSignal.timeout(2_000) })
+        if (!probe.ok) continue
+        const body = await probe.json()
+        if (body?.beacon === true) return body
+      } catch {
+        // No beacon on this candidate port.
+      }
+    }
+    return undefined
+  })()
+  assert.ok(beacon, `no discovery beacon answered on ${BEACON_PORTS.join(', ')}`)
+  assert.equal(beacon.wsUrl, config.wsUrl, 'beacon advertises the only real bridge URL')
+  assert.ok(Number.isInteger(beacon.pid) && beacon.pid > 0, 'beacon reports the host process id')
+  assert.equal(typeof beacon.startedAt, 'string')
   // Firefox-style origin requires a valid token even on loopback.
   socket = new WebSocket(config.wsUrl, { origin: 'moz-extension://runtime-smoke', handshakeTimeout: 10_000 })
   const frames = []
@@ -255,7 +277,7 @@ try {
     typeof skill.name === 'string' && skill.name !== '' && typeof skill.modelInvocable === 'boolean'
   )))
 
-  console.log('Real DSH smoke passed: discovery, token authentication, create/list/history, Session model selection, permission presets, Host commands and skills, V2 migration, V4 browser snapshots, and prepared projections after restart')
+  console.log('Real DSH smoke passed: discovery, discovery beacon, token authentication, create/list/history, Session model selection, permission presets, Host commands and skills, V2 migration, V4 browser snapshots, and prepared projections after restart')
   succeeded = true
 } catch (error) {
   console.error(hostLog)

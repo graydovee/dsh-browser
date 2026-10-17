@@ -68,6 +68,9 @@ describe('attaching a page selection in the composer', () => {
       onDevToolsStatus: vi.fn(() => unsubscribe),
       detachDevTools: vi.fn(async () => undefined),
       requestStatus: vi.fn(async () => {}),
+      startDiscovery: vi.fn(async () => []),
+      cancelDiscovery: vi.fn(async () => {}),
+      onDiscoveryProgress: vi.fn(() => unsubscribe),
     }
     root = createRoot(document.querySelector('#root')!)
   })

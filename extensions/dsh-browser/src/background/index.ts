@@ -18,12 +18,16 @@
  *   panel → bg: { type: 'panel.window', windowId }
  *   panel → bg: { type: 'selection.clear', selection? }
  *   panel → bg: { type: 'request-status' }
+ *   panel → bg: { type: 'discovery.start', id }
+ *   panel → bg: { type: 'discovery.cancel' }
+ *   bg → panel: { type: 'discovery.progress', id, done, total, instances }
+ *   bg → panel: { type: 'discovery.result', id, ok, instances? | error? }
  *   bg → panel: { type: 'rpc.result', id, ok, result? | error? }
  *   bg → panel: { type: 'respond.result', id, ok, result? | error? }
  *   bg → panel: { type: 'settings.result', id, ok, error? }
  *   bg → panel: { type: 'devtools.status', supported, enabled, attached, tabId?, error? }
  *   bg → panel: { type: 'devtools.detach.result', id, ok, error? }
- *   bg → panel: { type: 'status', state: BridgeState, caps? }
+ *   bg → panel: { type: 'status', state: BridgeState, caps?, discovery, address? }
  *   bg → panel: { type: 'event', frame: ServerFrame }
  *   bg → panel: { type: 'approval.request', request }
  *   bg → panel: { type: 'approval.resolved', id }
@@ -42,9 +46,11 @@ import {
   type RespondResult,
 } from '@yuxianglin/dsh-bridge-browser/src/protocol.ts'
 import type { ServerFrame } from '@yuxianglin/dsh-bridge-browser/src/protocol.ts'
-import { BRIDGE_CONFIG_PATH, BRIDGE_PATH, DEVTOOLS_CAPS_VERSION } from '@yuxianglin/dsh-bridge-browser/src/protocol.ts'
+import { BRIDGE_CONFIG_PATH, BRIDGE_PATH, DEVTOOLS_CAPS_VERSION, parseBridgeConfigPayload } from '@yuxianglin/dsh-bridge-browser/src/protocol.ts'
 import { BridgeClient, type BridgeState } from './bridge.ts'
 import { createRpc } from './rpc.ts'
+import { discoverInstances, planDiscovery, readBridgeConfig } from './discovery.ts'
+import { rangePorts, sweepRanges } from './port-scan.ts'
 import { listTabFrames } from './frames.ts'
 import {
   dispatchOpenTab,
@@ -122,47 +128,148 @@ const SETTINGS_DEFAULTS: Settings = {
 }
 
 /**
- * 自动探测的候选端口：
- * - dsh web（CLI）默认 3080，端口被占时依次回退 3081 / 3090；
- * - DSH Desktop 默认由系统随机分配本地 Web 端口（`dsh-desktop.port: 0`），
- *   用户指南推荐固定为 43189（见 deepseek-harness-desktop docs/user-guide）；
- * - 14389 为历史桌面应用端口，保留兼容旧版。
+ * 自动探测：DSH Desktop 启动 Host 时用 `--port 0`，本地 Web 端口每次启动都由系统
+ * 随机分配（Windows/macOS 49152–65535，Linux 32768–60999），固定端口列表无法预知。
+ * 因此探测分两段：
+ * 1. 上次成功的地址 → `dsh web` 默认端口 → 插件固定端口信标（43189–43198）；
+ * 2. 平台临时端口区间扫描（兜底没有信标的旧插件）。
+ * 只在面板打开时跑一次、或用户点「自动检测」时跑；未找到即终态，不再重试。
  */
-const DISCOVERY_PORTS = [3080, 3081, 3090, 14389, 43189]
 const LEGACY_LOCAL_URL = 'ws://127.0.0.1:3080'
+const LAST_BRIDGE_URL_KEY = 'dshLastBridgeUrl'
+const DISCOVERY_LATCH_KEY = 'dshDiscoveryLatch'
 
-/** 探测本机 dsh 的桥地址：fetch /ext/bridge-config 直到成功。 */
-async function discoverBridge(shouldContinue: () => boolean = () => true): Promise<string | undefined> {
-  for (const port of DISCOVERY_PORTS) {
-    if (!shouldContinue()) return undefined
-    try {
-      const response = await fetch(`http://127.0.0.1:${port}/ext/bridge-config`, {
-        signal: AbortSignal.timeout(1_500),
-      })
-      if (!shouldContinue()) return undefined
-      if (!response.ok) continue
-      const body = await response.json() as { wsUrl?: unknown }
-      if (typeof body.wsUrl === 'string' && body.wsUrl.startsWith('ws://')) return body.wsUrl
-    } catch {
-      // 该端口没有 dsh 或未挂桥：试下一个。
-    }
+/** 一次面板租约内的自动探测闸门；`not-found` 表示已确认没有服务，不再重试。 */
+type DiscoveryLatch = 'idle' | 'running' | 'not-found'
+
+/** 报给面板的探测状态，与传输层状态分开。 */
+type DiscoveryState = 'idle' | 'running' | 'found' | 'not-found'
+
+let discoveryLatch: DiscoveryLatch = 'idle'
+let discoveryState: DiscoveryState = 'idle'
+/** 上次成功连接的桥地址，下次探测时优先尝试。 */
+let lastBridgeUrl: string | undefined
+/** 当前连接实际使用的地址（手动填写或探测得到）。 */
+let connectedAddress: string | undefined
+/** 用户点「自动检测」发起的枚举，同一时间只跑一个。 */
+let activeScan: { id: string; controller: AbortController } | undefined
+/** `chrome.runtime.getPlatformInfo()` 的平台标识，用于选择扫描区间。 */
+let platformOs: string | undefined
+
+/** 读取平台标识（失败时按未知平台处理）。 */
+async function ensurePlatformOs(): Promise<void> {
+  if (platformOs !== undefined) return
+  try {
+    const info = await chrome.runtime.getPlatformInfo?.()
+    platformOs = typeof info?.os === 'string' ? info.os : undefined
+  } catch {
+    platformOs = undefined
   }
-  return undefined
+}
+
+/** 回环地址判定：只有本机地址才在连接失败时回落到自动探测。 */
+function isLocalBridgeAddress(url: string): boolean {
+  try {
+    const host = new URL(url).hostname.toLowerCase()
+    return host === '127.0.0.1' || host === 'localhost' || host === '[::1]' || host === '::1'
+  } catch {
+    return false
+  }
+}
+
+/** 记下成功的地址，供下次面板打开时优先尝试。 */
+function rememberBridgeUrl(url: string): void {
+  if (lastBridgeUrl === url) return
+  lastBridgeUrl = url
+  void Promise.resolve(chrome.storage.local.set({ [LAST_BRIDGE_URL_KEY]: url })).catch(() => {})
+}
+
+/** 跨 service worker 重启保留「未找到」，避免后台重启后偷偷重试。 */
+function persistDiscoveryLatch(value: DiscoveryLatch): void {
+  const area = (chrome.storage as { session?: chrome.storage.StorageArea }).session
+  if (area === undefined) return
+  void Promise.resolve(area.set({ [DISCOVERY_LATCH_KEY]: value })).catch(() => {})
+}
+
+/** 恢复上次运行留下的闸门与最近地址。 */
+async function loadDiscoveryMemory(): Promise<void> {
+  try {
+    const stored = await chrome.storage.local.get(LAST_BRIDGE_URL_KEY)
+    const remembered = stored?.[LAST_BRIDGE_URL_KEY]
+    if (typeof remembered === 'string' && remembered !== '') lastBridgeUrl = remembered
+  } catch {
+    // 记忆地址只是加速手段，读不到就按无记忆处理。
+  }
+  const area = (chrome.storage as { session?: chrome.storage.StorageArea }).session
+  if (area === undefined) return
+  try {
+    const stored = await area.get(DISCOVERY_LATCH_KEY)
+    if (stored?.[DISCOVERY_LATCH_KEY] === 'not-found') {
+      discoveryLatch = 'not-found'
+      discoveryState = 'not-found'
+    }
+  } catch {
+    // 同上：读不到按 idle 处理。
+  }
+}
+
+const discoveryMemory = loadDiscoveryMemory()
+
+/** 运行一次自动探测，返回首个命中的桥地址。 */
+async function discoverBridgeUrl(
+  shouldContinue: () => boolean,
+  excludeUrl?: string,
+): Promise<string | undefined> {
+  await discoveryMemory
+  await ensurePlatformOs()
+  if (!shouldContinue()) return undefined
+  const previousState = discoveryState
+  discoveryLatch = 'running'
+  discoveryState = 'running'
+  broadcastStatus()
+  try {
+    const instances = await discoverInstances(planDiscovery({
+      ...(lastBridgeUrl === undefined ? {} : { rememberedUrl: lastBridgeUrl }),
+      ...(excludeUrl === undefined ? {} : { excludeUrl }),
+      sweepPorts: rangePorts(sweepRanges(platformOs)),
+    }), {
+      probe: (port, timeoutMs) => readBridgeConfig(port, timeoutMs),
+      shouldContinue,
+    }, { stopAtFirstHit: true })
+    // A pass that lost its lease (panel closed, newer settings) reports nothing
+    // and leaves the confirmed state of the lease that replaced it untouched.
+    if (!shouldContinue()) {
+      discoveryState = previousState
+      return undefined
+    }
+    const first = instances[0]
+    if (first === undefined) {
+      discoveryLatch = 'not-found'
+      discoveryState = 'not-found'
+      persistDiscoveryLatch('not-found')
+      return undefined
+    }
+    discoveryLatch = 'idle'
+    discoveryState = 'found'
+    rememberBridgeUrl(first.wsUrl)
+    return first.wsUrl
+  } finally {
+    if (discoveryLatch === 'running') discoveryLatch = 'idle'
+  }
 }
 
 /** Avoid opening a noisy loopback WebSocket until the local bridge responds. */
 async function probeBridge(url: string): Promise<boolean> {
   try {
+    if (!isLocalBridgeAddress(url)) return true
     const target = new URL(url)
-    if (target.hostname !== '127.0.0.1') return true
     target.protocol = target.protocol === 'wss:' ? 'https:' : 'http:'
     target.pathname = BRIDGE_CONFIG_PATH
     target.search = ''
     target.hash = ''
     const response = await fetch(target, { signal: AbortSignal.timeout(1_500) })
     if (!response.ok) return false
-    const body = await response.json() as { wsUrl?: unknown }
-    return typeof body.wsUrl === 'string' && body.wsUrl.startsWith('ws://')
+    return parseBridgeConfigPayload(await response.json() as unknown) !== undefined
   } catch {
     return false
   }
@@ -399,8 +506,25 @@ function disarmBridgeKeepalive(): void {
   void Promise.resolve(chrome.alarms.clear(BRIDGE_KEEPALIVE_ALARM)).catch(() => {})
 }
 
+/** One status snapshot: transport state, capabilities, and discovery state. */
+function statusPayload(): {
+  type: 'status'
+  state: BridgeState
+  caps: BridgeCaps | null
+  discovery: DiscoveryState
+  address?: string
+} {
+  return {
+    type: 'status',
+    state: bridge?.state ?? ('stopped' as BridgeState),
+    caps,
+    discovery: discoveryState,
+    ...(connectedAddress === undefined ? {} : { address: connectedAddress }),
+  }
+}
+
 function broadcastStatus(): void {
-  const payload = { type: 'status', state: bridge?.state ?? ('stopped' as BridgeState), caps }
+  const payload = statusPayload()
   for (const port of panelPorts) {
     try { port.postMessage(payload) } catch { /* port already closed */ }
   }
@@ -1408,21 +1532,42 @@ function cancelAllToolCalls(): void {
   activeToolCalls.clear()
 }
 
-/** (Re)start the bridge with the current settings. 零配置：地址留空时自动探测；回环连接无需 token。 */
+/**
+ * (Re)start the bridge with the current settings.
+ *
+ * Order of preference: a filled-in address is tried first (it is the user's
+ * choice), and only a *loopback* address that fails its pre-flight falls back
+ * to one automatic discovery pass. With no address the pass runs directly.
+ * Nothing retries once that pass finds nothing.
+ */
 async function startBridge(): Promise<void> {
-  const revision = ++bridgeStartRevision
   if (panelPorts.size === 0) return
+  // One automatic pass per lease: a second panel in another window joins it
+  // instead of launching a competing scan. Checked before the revision bump so
+  // a duplicate trigger cannot invalidate the pass it is deferring to.
+  if (discoveryLatch === 'running') return
+  const revision = ++bridgeStartRevision
+  const lease = (): boolean => revision === bridgeStartRevision && panelPorts.size > 0
   let url = settings.bridgeUrl
-  if (url === '') {
-    url = await discoverBridge(() => revision === bridgeStartRevision && panelPorts.size > 0) ?? ''
+  if (url !== '') {
+    if (isLocalBridgeAddress(url) && !await probeBridge(url)) {
+      if (!lease()) return
+      url = await discoverBridgeUrl(lease, url) ?? ''
+    }
+  } else if (discoveryLatch !== 'not-found') {
+    url = await discoverBridgeUrl(lease) ?? ''
+  } else {
+    // Already confirmed absent in this lease: report and wait for the user.
+    url = ''
   }
   // Discovery is asynchronous. A panel may have closed or a newer settings
   // update may have started while its fetches were in flight.
-  if (revision !== bridgeStartRevision || panelPorts.size === 0) return
+  if (!lease()) return
   if (url === '') {
     bridge?.stop()
     bridge = null
     rpc = null
+    connectedAddress = undefined
     broadcastStatus()
     return
   }
@@ -1435,6 +1580,7 @@ async function startBridge(): Promise<void> {
   } catch {
     // 非法 URL 原样交给 WebSocket 构造函数报错。
   }
+  connectedAddress = url
   if (bridge === null) {
     const client = new BridgeClient({
       onStateChange: (state) => {
@@ -1472,6 +1618,79 @@ async function startBridge(): Promise<void> {
     rpc = createRpc(client)
   }
   bridge.start(url, settings.token)
+}
+
+/**
+ * Enumerate every local instance for the settings picker.
+ *
+ * Unlike the startup pass this never stops early: the fixed and beacon groups
+ * run first for instant feedback, then the whole ephemeral range is swept.
+ * Results stream back to the requesting panel; cancellation only ends the sweep.
+ * @param port - panel port that asked.
+ * @param id - request id echoed on every message.
+ */
+async function runPanelDiscovery(port: chrome.runtime.Port, id: string): Promise<void> {
+  activeScan?.controller.abort()
+  const controller = new AbortController()
+  activeScan = { id, controller }
+  discoveryLatch = 'idle'
+  discoveryState = 'running'
+  persistDiscoveryLatch('idle')
+  broadcastStatus()
+  const reply = (message: unknown): void => {
+    try { port.postMessage(message) } catch { /* port closed */ }
+  }
+  try {
+    await discoveryMemory
+    await ensurePlatformOs()
+    const instances = await discoverInstances(planDiscovery({
+      ...(lastBridgeUrl === undefined ? {} : { rememberedUrl: lastBridgeUrl }),
+      sweepPorts: rangePorts(sweepRanges(platformOs)),
+    }), {
+      probe: (candidate, timeoutMs) => readBridgeConfig(candidate, timeoutMs),
+      shouldContinue: () => !controller.signal.aborted,
+      onProgress: (progress) => {
+        if (activeScan?.id !== id) return
+        reply({
+          type: 'discovery.progress',
+          id,
+          done: progress.done,
+          total: progress.total,
+          instances: progress.instances,
+        })
+      },
+    }, { stopAtFirstHit: false })
+    if (activeScan?.id !== id) return
+    if (controller.signal.aborted) {
+      // A cancelled scan keeps whatever state the bridge already had.
+      discoveryState = bridge?.state === 'connected' ? 'found' : 'idle'
+      broadcastStatus()
+      reply({ type: 'discovery.result', id, ok: false, error: { code: 'cancelled', message: 'discovery cancelled' } })
+      return
+    }
+    if (instances.length > 0) {
+      discoveryLatch = 'idle'
+      discoveryState = 'found'
+      rememberBridgeUrl(instances[0]!.wsUrl)
+    } else {
+      discoveryLatch = 'not-found'
+      discoveryState = 'not-found'
+      persistDiscoveryLatch('not-found')
+    }
+    broadcastStatus()
+    reply({ type: 'discovery.result', id, ok: true, instances })
+  } catch (error) {
+    if (activeScan?.id !== id) return
+    discoveryLatch = 'idle'
+    reply({
+      type: 'discovery.result',
+      id,
+      ok: false,
+      error: { code: 'scan-failed', message: error instanceof Error ? error.message : String(error) },
+    })
+  } finally {
+    if (activeScan?.id === id) activeScan = undefined
+  }
 }
 
 /** Gateway RPC with a helpful error when the bridge is down. */
@@ -1520,9 +1739,12 @@ chrome.runtime.onConnect.addListener((port) => {
   void settingsReady.then(syncSelectionWatch)
   void settingsReady.then(() => {
     if (!panelPorts.has(port)) return
+    // One automatic pass per panel lease: a confirmed miss stays terminal until
+    // the lease ends or the user asks again (settings save / 自动检测).
+    if (discoveryLatch === 'not-found') return
     if (bridge === null || bridge.state === 'stopped') return startBridge()
   })
-  try { port.postMessage({ type: 'status', state: bridge?.state ?? ('stopped' as BridgeState), caps }) } catch { /* port closed */ }
+  try { port.postMessage(statusPayload()) } catch { /* port closed */ }
   broadcastDevToolsState()
   void affinityReady.then(async () => {
     await syncActiveTab()
@@ -1592,6 +1814,11 @@ chrome.runtime.onConnect.addListener((port) => {
             await persistSettings(settingsMsg.settings)
             const connectionChanged = settings.bridgeUrl !== previousConnection.bridgeUrl
               || settings.token !== previousConnection.token
+            if (connectionChanged) {
+              // An explicit address supersedes a confirmed miss from this lease.
+              discoveryLatch = 'idle'
+              persistDiscoveryLatch('idle')
+            }
             if (panelPorts.size > 0) {
               if (connectionChanged) await startBridge()
               broadcastStatus()
@@ -1661,6 +1888,17 @@ chrome.runtime.onConnect.addListener((port) => {
             } catch { /* port closed */ }
           },
         )
+        break
+      }
+      case 'discovery.start': {
+        // Manual scan from the settings page: enumerate every local instance.
+        const request = message as { id?: unknown }
+        if (typeof request.id !== 'string') break
+        void runPanelDiscovery(port, request.id)
+        break
+      }
+      case 'discovery.cancel': {
+        activeScan?.controller.abort()
         break
       }
       case 'selection.clear': {
@@ -1821,6 +2059,12 @@ chrome.runtime.onConnect.addListener((port) => {
       bridge?.suspendReconnect()
       sessionTrustedActionOrigins.clear()
       approvals.notifyPending()
+      // A fresh panel lease re-runs the automatic pass, so a miss is not final
+      // for the browser session — only for the lease it was observed in.
+      activeScan?.controller.abort()
+      discoveryLatch = 'idle'
+      discoveryState = 'idle'
+      persistDiscoveryLatch('idle')
       if (bridge?.state !== 'connected') disarmBridgeKeepalive()
     }
   })
@@ -1934,6 +2178,9 @@ chrome.windows.onFocusChanged.addListener((windowId) => {
 
 chrome.alarms.onAlarm.addListener((alarm) => {
   if (alarm.name !== BRIDGE_KEEPALIVE_ALARM) return
+  // A confirmed miss is terminal for this lease: do not re-probe in the
+  // background, and do not wake the worker for it either.
+  if (discoveryLatch === 'not-found') return
   if (panelPorts.size === 0) {
     if (bridge === null || bridge.state !== 'connected') disarmBridgeKeepalive()
     return
