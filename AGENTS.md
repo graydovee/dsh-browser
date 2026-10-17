@@ -13,7 +13,7 @@
 - `main` 最后一次提交 2026-10-01；最后一个 release v0.1.3（2026-09-04）。
 - 9 个 PR 待合入（最早的一个自 2026-09-16 起），13 个 issue 未关闭。
 
-因此本 fork 暂时承担维护：扩展的更新检查与安装脚本指向本 fork（`extensions/dsh-browser/src/panel/updates.ts`、`scripts/install.*`），版本号推进到 v0.1.5。这些属于 fork 专有接线，**不进入对上游的 PR**。
+因此本 fork 暂时承担维护：扩展的更新检查与安装脚本指向本 fork（`extensions/dsh-browser/src/panel/updates.ts`、`scripts/install.*`），版本号推进到 v0.1.6。这些属于 fork 专有接线，**不进入对上游的 PR**。
 
 ### `omdsh-dev/dsh-browser` 分支的作用
 
@@ -26,7 +26,7 @@
 ### 当前的 issue 与 PR
 
 - Issue：<https://github.com/omdsh-dev/dsh-browser/issues/120> —— 维护说明（上游停更期间在 fork 维护，功能整合为一个 PR，可随时合回主线）。
-- PR：<https://github.com/omdsh-dev/dsh-browser/pull/121> —— `feat: 浏览器桥接新增开发者工具、视口截图与输入区控件`；base `omdsh-dev/dsh-browser:main` ← head `graydovee:omdsh-dev/dsh-browser`；59 文件 / +9522 −130。
+- PR：<https://github.com/omdsh-dev/dsh-browser/pull/121> —— `feat: 浏览器桥接新增开发者工具、视口截图与输入区控件`；base `omdsh-dev/dsh-browser:main` ← head `graydovee:omdsh-dev/dsh-browser`；规模随功能合入增长（核对时 73 文件 / +15018 −5059），以 GitHub 页面为准。
 - 该 PR 是"活"的：后续每次功能更新推到同一分支，并在 PR 内回复一条评论追加 changelog 条目；issue #120 只作线索，不堆内容。
 
 ## Project Structure & Module Organization
@@ -88,7 +88,7 @@ powershell scripts/install.ps1          # 安装/升级（Windows）：同上，
 1. **开新分支开发**：从 `main` 切出新分支做功能开发（`feat/…` / `fix/…`），不要直接在 `main` 上改。
 2. **合入 `omdsh-dev/dsh-browser` 分支**：功能完成、`pnpm typecheck && pnpm test` 通过后，把功能分支合入 `omdsh-dev/dsh-browser`。这条分支是对上游 `omdsh-dev/dsh-browser` 的 PR 承载分支（PR #121），只带产品改动——源码、测试、文档；`CHANGELOG`、`AGENTS.md`、fork 的发布/更新源接线、版本号 bump 都不进这条分支。
 3. **同步 PR 的描述与评论**（每次合入都必须做，漏了视同没合入）：
-   - **描述里追加 changelog 条目**：PR 描述是"changelog 摘要"的汇总，一条 changelog 对应一行，最新合入的排在前面；描述只写摘要，不写实现细节。
+   - **描述里的 changelog 与 changelog 文件一致**：直接照搬 `CHANGELOG.md` / `CHANGELOG.zh-CN.md` 的条目，并**按版本分组**（`## v0.x.y`，新版本段落放在最上面；同一版本内英文条目在前、中文条目在后，逐条对应）。描述只放 changelog 条目，不写实现细节；新增功能时先写文件条目，再原样同步到描述。
    - **一条独立评论详述该功能**：在 PR 里发一条评论，用固定结构写清这个功能——`概述 / 动机 / 改动内容 / 测试 / 影响范围`（中英双语小标题）。评论按合入时间正序排列，一条评论对应一条 changelog，后续功能依次往下追加，不改写已有评论。
    - 同时同步 `main` 上的 `CHANGELOG.md` / `CHANGELOG.zh-CN.md`（写法见《CHANGELOG 规则》）。
 4. **合入 `main`（即 master）**：changelog 定稿后，再把 `omdsh-dev/dsh-browser` 合入 `main`。`main` 是本地发布与 `main` 分支跟随上游的基准，不要跳过第 3 步直接合。
