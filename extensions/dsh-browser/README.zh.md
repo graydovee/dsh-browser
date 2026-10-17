@@ -6,6 +6,7 @@ dsh 的**浏览器操作端**：让模型直接读取并操作你在浏览器里
 
 **两条明确分离的通道**：浏览器页面仍以结构化文本呈现（带编号的交互元素清单），浏览器工具不会截图；另一方面，dsh 0.1.2 宿主可声明多模态图片限制，侧栏据此接收 PNG、JPEG、WebP 和 GIF，并渲染会话中的持久图片附件。
 
+
 ## 模型能做什么
 
 | 能力 | 动作 | 说明 |
@@ -21,6 +22,9 @@ dsh 的**浏览器操作端**：让模型直接读取并操作你在浏览器里
 | 关闭标签页 | `browser_close_tab` | 关闭已列出的标签页 |
 | 读区域 | `browser_get_text` | 懒加载内容 / 局部文本 |
 | 等待 | `browser_wait` | 页面加载与渲染稳定检测 |
+| 查看元素与 CSS | `browser_devtools_elements` / `browser_devtools_set_element_style` / `browser_devtools_set_element_attribute` | 高权限：计算样式、盒模型、命中规则，并可现场修改 CSS 与属性来调试 |
+| 执行页面 JS | `browser_console_eval` / `browser_console_logs` | 高权限：在页面自身上下文执行代码，并读取记录的控制台输出 |
+| 网络抓包 | `browser_devtools_network` / `browser_devtools_list_requests` / `browser_devtools_get_request` / `browser_devtools_request_body` | 高权限：已捕获请求列表、单条详情与正文（凭据类请求头默认脱敏） |
 | 图片对话 | `session.prompt` / `session.attachment` | 按宿主能力启用图片选择、纯图片发送和持久历史预览 |
 | 引用你划选的内容 | 侧栏输入框 | 你在页面里选中的文字会变成输入框里的引用，随下一条消息一起发送 |
 
@@ -105,6 +109,14 @@ pnpm --filter dsh-browser-extension run test
 
 如果只开发扩展，Chrome 从 `chrome://extensions` 加载 `extensions/dsh-browser/dist/`；Firefox 运行 `build:firefox` 后，从 `about:debugging#/runtime/this-firefox` 加载 `extensions/dsh-browser/dist-firefox/manifest.json`。代码更新后需重新构建并重新加载。
 
+## 输入区控制：权限模式、模型、命令与 Skill
+
+输入区提供与 Web GUI 对齐的控件，全部由桥插件自有的 Host 方法支撑：
+
+- **权限模式**（左侧 chip）：部署的预设表（`read-only`、`workspace-write`、`danger-full-access`，实验 Auto integration 挂载时还有 `auto`）加上当前会话的取值。选择预设会执行宿主自己的 `/permission <preset>` 命令，因此 `permission/preset` 选择与两个旋钮事件都会像 Web GUI 选择一样写入会话日志。「完全权限」与「Auto review」会先要求显式确认；推导态 `custom` 只作展示、不可选；菜单底部提示新会话的默认值。首次发送消息创建会话之前，选择会被记住，并在 materialize 时、第一条提示词准入之前应用。
+- **模型与推理强度**（右侧 chip）：按 provider 分组的模型目录，以及当前模型声明的推理强度（含「默认」）。选择只影响**下一轮**装配，因此回合运行中 chip 依然可用。目录读取失败时该行会说明原因并提供重试，而不是静默变灰；漏掉的 `turn/end` 会在面板下次变为可见时按宿主的 `running` 标记纠正。
+- **`/` 选单**：在空行输入 `/` 会打开宿主命令目录（`/compact`、`/permission`、`/plan`、`/goal`、`/feedback`、`/export` 等）与该会话的用户可调用 skill，其中包含标记为 `modelInvocable: false` 的 skill（带「仅用户可调用」角标）——它们正是为显式调用而存在。`↑`/`↓` 移动、`Enter`/`Tab` 接受、`Esc` 关闭；选中某行会插入其确切文本，方便继续补参数。提交时面板按与宿主适配器一致的规则裁决：命令名走 `commands.execute`（其输出永远不会变成模型消息），skill 名按字面文本发送（由宿主注入 skill 正文），无法识别的 `/…` 行会被**拒绝**且草稿保留——若想按普通文本发送，请在行首加一个空格。命令不支持附件；临时会话（尚未创建）的命令/skill 目录在第一条消息创建会话前返回空。
+
 ## 为什么浏览器操作仍采用纯文本
 
 - **快照即视图**：模型对页面的全部认知 = 结构化文本（标题/URL/正文/编号元素/表单），默认预算 32k 字符（插件可配，经 `hello.ok` 协商给扩展）。
@@ -117,13 +129,24 @@ pnpm --filter dsh-browser-extension run test
 - **完全控制需显式开启**：**允许模型完全控制浏览器**只有设置保存成功后才会生效，启用后页面读取、页面操作以及标签页列出/跟随/关闭均无需确认。调用在收到时固定其访问模式，因此开启完全控制不会追溯提升已经开始的受限调用。关闭会立即生效：取消尚未下发操作的调用，等待已经下发到浏览器的操作完成，再保存限制设置。快速重新开启也会在旧权限撤销完成前保持受限，并发保存会按请求顺序落盘。受保护页面的 DOM 内容始终不可访问。
 - **会话续接**：重新打开侧栏时默认恢复最近活跃的浏览器会话；若该会话不可用，则恢复最新的非空持久会话，最后才创建新会话。可在设置中关闭。
 
+## 开发者工具（需显式开启，高权限）
+
+开发者工具组通过 Chrome 调试协议（`chrome.debugger`）驱动受控标签页，因此可以查看并修改页面元素与 CSS、在页面自身上下文执行 JavaScript、以及抓取网络请求（含页面层拦截拿不可靠的响应正文）。
+
+- **默认关闭**：每次开发者工具调用都会单独弹出审批。该弹窗有独立标题，可选择仅允许这一次、本次会话信任该组、或拒绝。**允许模型完全控制浏览器**开关与持久化 origin 白名单**都不会**覆盖这一组。
+- **需要显式开启**：只有设置里的**允许开发者工具**开启后，这些调用才会免除逐次确认。关闭会立即断开调试器并中断进行中的开发者工具调用；设置一变，本次会话的临时信任也同时清空。
+- **每个标签页只允许一个调试器**：Chrome 会拒绝第二个调试器，因此附加期间浏览器自带的开发者工具无法在同一标签页打开。工具返回会说明原因并提示先关闭该标签页的 DevTools。
+- **数据处理**：抓包只存在内存中，上限为 200 条请求与 500 条控制台记录，附加时与每次顶层导航时都会重置。`Authorization`、`Cookie`、`Set-Cookie` 等请求头默认显示为 `[redacted]`，除非某次调用显式选择；疑似认证 URL 的正文默认脱敏。
+- **平台**：仅 Chrome。Firefox 构建不申请 `debugger` 权限，因此宿主也不会在该平台注册这一组工具。
+
 ## 权限说明
 
-Chrome 使用 `sidePanel`，Firefox 使用 `sidebar_action`。两者都申请 `storage`（设置与最近会话续接）、`notifications`（侧栏关闭时可选的审批提醒）、`tabs` + `activeTab` + `scripting`（观察切页，并向用户显式选择的受控标签页注入/发消息；安装前已打开的页面也会按需补注入）、`webNavigation`（枚举该标签页中的 frame，并把消息绑定到具体文档）、`alarms`（后台保活）和 `http/https`（内容脚本注入普通网页）。Firefox AMO manifest 如实声明扩展会把浏览活动、网页内容/操作和对话内容发送给用户配置的 dsh/模型服务。扩展绝不改变用户正在看的标签页，也不会静默跟随手动切页；只有用户选择继续原页面后，助手才会在后台操作。
+Chrome 使用 `sidePanel`，Firefox 使用 `sidebar_action`。两者都申请 `storage`（设置与最近会话续接）、`notifications`（侧栏关闭时可选的审批提醒）、`tabs` + `activeTab` + `scripting`（观察切页，并向用户显式选择的受控标签页注入/发消息；安装前已打开的页面也会按需补注入）、`webNavigation`（枚举该标签页中的 frame，并把消息绑定到具体文档）、`alarms`（后台保活）和 `http/https`（内容脚本注入普通网页）。Chrome 额外申请 `debugger`，这是可选的开发者工具组所需；Firefox manifest 不申请该权限，因此该组在 Firefox 上始终不可用。Firefox AMO manifest 如实声明扩展会把浏览活动、网页内容/操作和对话内容发送给用户配置的 dsh/模型服务。扩展绝不改变用户正在看的标签页，也不会静默跟随手动切页；只有用户选择继续原页面后，助手才会在后台操作。
 
 ## 已知限制
 
 - 同时只有一个扩展连接桥。未打开侧栏的浏览器 Profile 不会抢占连接；另一个已打开的侧栏顶替连接后，被替换的一端会主动让权，不再反复重连互踢。
+- 开发者工具仅 Chrome 可用，需要用户开启设置或逐次审批，且在同一标签页开着浏览器自带 DevTools 时无法附加。附加期间该标签页会显示 Chrome 的“正在调试此浏览器”提示，直到调用结束或设置关闭。
 - 标签页绑定属于整个扩展连接，而不是单个对话会话。
 - 可访问的跨源 iframe 会进入快照，并通过稳定的 `(frame, index)` 地址执行操作；受保护或已销毁的 frame 会标记为不可访问，不影响整页快照。
 - 验证码/纯图片按钮无法处理——工具结果会标注"存在无文本可访问名的元素"，提示用户手动完成该步。

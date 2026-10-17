@@ -127,6 +127,12 @@ class RemoteHostApi implements BrowserHostApi {
   async call(call: HostRpcCall): Promise<HostRpcResult> {
     if (call.method === 'session.history') return this.sessionHistory(call)
     if (call.method === 'session.models') return this.sessionModels(call)
+    if (call.method === 'permission.catalog') return this.permissionCatalog(call)
+    if (call.method === 'session.permissions') return this.sessionPermissions(call)
+    if (call.method === 'session.setPermission') return this.sessionSetPermission(call)
+    if (call.method === 'commands.list') return this.commandList(call)
+    if (call.method === 'commands.execute') return this.commandExecute(call)
+    if (call.method === 'skills.list') return this.skillList(call)
     if (call.method === 'workspace.list') return this.workspaceList(call)
 
     const target = invokeTarget(call)
@@ -242,6 +248,150 @@ class RemoteHostApi implements BrowserHostApi {
       const modelSelection = isRecord(values) ? values.modelSelection : undefined
       const next = isRecord(modelSelection) ? modelSelectionOf(modelSelection.next) : undefined
       return { ok: true, value: adaptModelCatalog(catalog, next) }
+    } catch (error: unknown) {
+      return { ok: false, error: this.failure(error) }
+    }
+  }
+
+  /** One session's projection values, or undefined when the Host reports none. */
+  private async sessionProjectionValues(
+    sessionId: string,
+    signal: AbortSignal,
+  ): Promise<Record<string, unknown> | undefined> {
+    const projections = await this.gateway.invoke({
+      namespace: 'session', method: 'projections', args: { request: { sessionId } }, signal,
+    })
+    const values = isRecord(projections) ? projections.values : undefined
+    return isRecord(values) ? values : undefined
+  }
+
+  /** Process-level permission preset directory: the panel's only source of preset names. */
+  private async permissionCatalog(call: HostRpcCall): Promise<HostRpcResult> {
+    try {
+      const catalog = await this.gateway.invoke({
+        namespace: 'permissionPresets', method: 'catalog', args: {}, signal: call.signal,
+      })
+      return { ok: true, value: adaptPermissionCatalog(catalog) }
+    } catch (error: unknown) {
+      return { ok: false, error: this.failure(error) }
+    }
+  }
+
+  /**
+   * Combine the process catalog with the Session's current preset.
+   * A Session whose `permissions` projection is absent (Host without the
+   * permission service) reports the default preset with `routable: false`
+   * instead of failing, so the panel can hide the control.
+   */
+  private async sessionPermissions(call: HostRpcCall): Promise<HostRpcResult> {
+    const sessionId = sessionIdOf(call.payload)
+    if (sessionId === undefined) return badRequest('session.permissions requires a non-empty sessionId')
+    try {
+      const catalog = adaptPermissionCatalog(await this.gateway.invoke({
+        namespace: 'permissionPresets', method: 'catalog', args: {}, signal: call.signal,
+      }))
+      const values = await this.sessionProjectionValues(sessionId, call.signal)
+      const current = currentPermissionOf(values?.permissions)
+      return {
+        ok: true,
+        value: {
+          current: current ?? catalog.defaultPreset,
+          routable: current !== undefined,
+          provisional: false,
+          options: catalog.options,
+          defaultOptions: catalog.defaultOptions,
+          defaultPreset: catalog.defaultPreset,
+        },
+      }
+    } catch (error: unknown) {
+      return { ok: false, error: this.failure(error) }
+    }
+  }
+
+  /**
+   * Switch the Session's permission preset through the Host's own
+   * `/permission` command, so the preset selection and both knob events land
+   * in the Session log exactly as a Web GUI selection would.
+   */
+  private async sessionSetPermission(call: HostRpcCall): Promise<HostRpcResult> {
+    if (!isRecord(call.payload)) return badRequest('session.setPermission payload must be an object')
+    const sessionId = sessionIdOf(call.payload)
+    const preset = typeof call.payload.preset === 'string' ? call.payload.preset.trim() : ''
+    if (sessionId === undefined) return badRequest('session.setPermission requires a non-empty sessionId')
+    if (preset === '') return badRequest('session.setPermission requires a preset')
+    try {
+      const catalog = adaptPermissionCatalog(await this.gateway.invoke({
+        namespace: 'permissionPresets', method: 'catalog', args: {}, signal: call.signal,
+      }))
+      if (!catalog.options.some((option) => option.value === preset)) {
+        return badRequest(`unknown permission preset ${JSON.stringify(preset)}`)
+      }
+      const executed = await this.runCommand(sessionId, permissionSwitchLine(preset), call)
+      if (!executed.ok) return executed
+      return { ok: true, value: { preset, ...(executed.value as Record<string, unknown>) } }
+    } catch (error: unknown) {
+      return { ok: false, error: this.failure(error) }
+    }
+  }
+
+  /** Host slash-command directory for one Session's agent scope. */
+  private async commandList(call: HostRpcCall): Promise<HostRpcResult> {
+    const sessionId = sessionIdOf(call.payload)
+    if (sessionId === undefined) return badRequest('commands.list requires a non-empty sessionId')
+    try {
+      const value = await this.gateway.invoke({
+        namespace: 'commands', method: 'list', args: { agentId: sessionId }, signal: call.signal,
+      })
+      return { ok: true, value: { commands: adaptCommandList(value), provisional: false } }
+    } catch (error: unknown) {
+      return { ok: false, error: this.failure(error) }
+    }
+  }
+
+  /**
+   * Run one Host slash command against the Session's agent.
+   * Command output never becomes a model message; the panel renders the
+   * settled result itself.
+   */
+  private async commandExecute(call: HostRpcCall): Promise<HostRpcResult> {
+    if (!isRecord(call.payload)) return badRequest('commands.execute payload must be an object')
+    const sessionId = sessionIdOf(call.payload)
+    const line = typeof call.payload.line === 'string' ? call.payload.line : ''
+    if (sessionId === undefined) return badRequest('commands.execute requires a non-empty sessionId')
+    if (!isCommandLine(line)) return badRequest('commands.execute requires a slash command line')
+    return this.runCommand(sessionId, line, call)
+  }
+
+  /** User-invocable skill directory for one Session composition. */
+  private async skillList(call: HostRpcCall): Promise<HostRpcResult> {
+    const sessionId = sessionIdOf(call.payload)
+    if (sessionId === undefined) return badRequest('skills.list requires a non-empty sessionId')
+    try {
+      const value = await this.gateway.invoke({
+        namespace: 'skills', method: 'list', args: { request: { sessionId } }, signal: call.signal,
+      })
+      return { ok: true, value: { skills: adaptSkillList(value), provisional: false } }
+    } catch (error: unknown) {
+      return { ok: false, error: this.failure(error) }
+    }
+  }
+
+  /**
+   * Dispatch one command line through `commands/execute`.
+   * The Host answers `undefined` for syntactically valid but unknown commands,
+   * which is a caller error rather than an empty success.
+   */
+  private async runCommand(sessionId: string, line: string, call: HostRpcCall): Promise<HostRpcResult> {
+    try {
+      const value = await this.gateway.invoke({
+        namespace: 'commands',
+        method: 'execute',
+        args: { agentId: sessionId, line, submittedAttachments: [] },
+        signal: call.signal,
+      })
+      const execution = adaptCommandExecution(value)
+      if (execution === undefined) return badRequest(`unknown command line ${JSON.stringify(line)}`)
+      return { ok: true, value: execution }
     } catch (error: unknown) {
       return { ok: false, error: this.failure(error) }
     }
@@ -978,6 +1128,122 @@ function modelSelectionOf(value: unknown): {
     model,
     ...(reasoningEffort === undefined ? {} : { reasoningEffort }),
   }
+}
+
+/** One selectable permission preset as the Host advertises it. */
+export interface PermissionCatalogOption {
+  readonly value: string
+  readonly name: string
+  readonly description?: string
+}
+
+/** Process-level permission preset directory. */
+export interface PermissionCatalog {
+  readonly options: readonly PermissionCatalogOption[]
+  readonly defaultOptions: readonly PermissionCatalogOption[]
+  readonly defaultPreset: string
+}
+
+/** Host command line that switches one Session's permission preset. */
+export function permissionSwitchLine(preset: string): string {
+  return `/permission ${preset}`
+}
+
+/**
+ * Host command syntax: byte 0 is `/`, then a lowercase name, then the end of
+ * input or whitespace. Anything else is a prompt, never a command.
+ * @param line - the exact composer line.
+ * @returns true when the line claims the Host command grammar.
+ */
+export function isCommandLine(line: string): boolean {
+  return /^\/[a-z0-9_-]+(?:[ \t]|$)/u.test(line)
+}
+
+function adaptPermissionCatalog(value: unknown): PermissionCatalog {
+  if (!isRecord(value)) throw new TypeError('permissionPresets.catalog returned an invalid directory')
+  const options = adaptPermissionOptions(value.options, 'permissionPresets.catalog options')
+  const defaultOptions = adaptPermissionOptions(value.defaultOptions, 'permissionPresets.catalog defaultOptions')
+  const defaultPreset = typeof value.defaultPreset === 'string' ? value.defaultPreset.trim() : ''
+  if (defaultPreset === '') throw new TypeError('permissionPresets.catalog returned no default preset')
+  return { options, defaultOptions, defaultPreset }
+}
+
+function adaptPermissionOptions(value: unknown, label: string): PermissionCatalogOption[] {
+  if (!Array.isArray(value)) throw new TypeError(`${label} are not an array`)
+  return value.map((entry) => {
+    if (!isRecord(entry)) throw new TypeError(`${label} carried an invalid entry`)
+    const preset = typeof entry.value === 'string' ? entry.value.trim() : ''
+    const name = typeof entry.name === 'string' ? entry.name.trim() : ''
+    if (preset === '' || name === '') throw new TypeError(`${label} carried an invalid entry`)
+    return {
+      value: preset,
+      name,
+      ...(typeof entry.description === 'string' && entry.description !== ''
+        ? { description: entry.description }
+        : {}),
+    }
+  })
+}
+
+/** Read `permissions.currentValue` out of one Session projection payload. */
+function currentPermissionOf(value: unknown): string | undefined {
+  if (!isRecord(value)) return undefined
+  const current = typeof value.currentValue === 'string' ? value.currentValue.trim() : ''
+  return current === '' ? undefined : current
+}
+
+/** Map the Host command directory into the panel's discovery shape. */
+function adaptCommandList(value: unknown): Array<Record<string, unknown>> {
+  if (!Array.isArray(value)) throw new TypeError('commands/list returned an invalid directory')
+  return value.map((entry) => {
+    if (!isRecord(entry)) throw new TypeError('commands/list carried an invalid entry')
+    const name = typeof entry.name === 'string' ? entry.name.trim() : ''
+    if (name === '') throw new TypeError('commands/list carried an unnamed command')
+    const input = isRecord(entry.input) ? entry.input : undefined
+    const hint = typeof input?.hint === 'string' ? input.hint : undefined
+    return {
+      name,
+      description: typeof entry.description === 'string' ? entry.description : '',
+      ...(hint === undefined ? {} : { hint }),
+      ...(typeof entry.definitionId === 'string' ? { definitionId: entry.definitionId } : {}),
+    }
+  })
+}
+
+/** Settle the Host command execution envelope; undefined means "unknown command". */
+function adaptCommandExecution(value: unknown): Record<string, unknown> | undefined {
+  if (!isRecord(value) || typeof value.commandId !== 'string') return undefined
+  const result = value.result
+  if (!isRecord(result) || (result.kind !== 'success' && result.kind !== 'error')) {
+    throw new TypeError('commands/execute returned an invalid result')
+  }
+  const text = typeof result.text === 'string' ? result.text : undefined
+  return {
+    commandId: value.commandId,
+    result: {
+      kind: result.kind,
+      ...(text === undefined ? {} : { text }),
+      ...(Number.isSafeInteger(result.sourceEventSeq) ? { sourceEventSeq: result.sourceEventSeq } : {}),
+    },
+  }
+}
+
+/** Map the Host skill directory into the panel's discovery shape. */
+function adaptSkillList(value: unknown): Array<Record<string, unknown>> {
+  const raw = isRecord(value) ? value.skills : undefined
+  if (!Array.isArray(raw)) throw new TypeError('skills/list returned an invalid directory')
+  return raw.map((entry) => {
+    if (!isRecord(entry)) throw new TypeError('skills/list carried an invalid entry')
+    const name = typeof entry.name === 'string' ? entry.name.trim() : ''
+    if (name === '') throw new TypeError('skills/list carried an unnamed skill')
+    return {
+      name,
+      description: typeof entry.description === 'string' ? entry.description : '',
+      ...(typeof entry.whenToUse === 'string' ? { whenToUse: entry.whenToUse } : {}),
+      modelInvocable: entry.modelInvocable === true,
+      ...(typeof entry.path === 'string' ? { path: entry.path } : {}),
+    }
+  })
 }
 
 function badRequest(message: string): HostRpcResult {

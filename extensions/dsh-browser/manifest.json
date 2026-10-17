@@ -13,11 +13,11 @@
     "scripting",
     "webNavigation",
     "alarms",
-    "notifications"
+    "notifications",
+    "debugger"
   ],
   "host_permissions": [
-    "http://*/*",
-    "https://*/*"
+    "<all_urls>"
   ],
   "background": {
     "service_worker": "background.js",

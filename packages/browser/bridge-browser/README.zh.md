@@ -6,6 +6,7 @@ dsh 的**浏览器操作桥**：在宿主 webserver 上挂载一个 **token 认�
 
 **纯文本浏览器工具，多模态对话透传**：页面快照仍是结构化文本（标题、正文、带编号的交互清单、敏感值打码的表单字段），所有浏览器动作按稳定编号寻址。通用 RPC 通道也会透传 dsh 0.2.0 的图片消息和持久附件读取；延迟创建的新会话只在宿主确实挂载附件服务时声明图片限制。
 
+
 ## 配置
 
 | 键 | 类型 | 默认 | 说明 |
@@ -14,6 +15,7 @@ dsh 的**浏览器操作桥**：在宿主 webserver 上挂载一个 **token 认�
 | `toolTimeoutMs` | `number` | 90000 | 单次工具调用预算，为扩展的 60 秒审批窗口预留时间。 |
 | `snapshotMaxChars` | `number` | 32000 | 单次快照渲染字符上限，最小为 500（经 `hello.ok` caps 协商给扩展）。 |
 | `maxInteractiveItems` | `number` | 60 | 单次快照交互清单条数上限。 |
+| `devToolsMaxChars` | `number` | 24000 | 单次开发者工具结果渲染字符上限，最小为 500。 |
 | `sessionWorkspacePath` | `string` | `~/.dsh/browser-sessions` | 扩展创建的会话所用的专用 Host Workspace。插件会在首次调用未显式指定工作区的 `session.create` 时创建并幂等注册该目录；会话的 cwd 随之变为此路径，因此 GUI 会显示 `browser-sessions` 工作区分组。设为 `""` 可让会话继续显示在“未分组”中。 |
 | `deferSessionCreate` | `boolean` | `true` | 会话只在第一条消息时才真正创建：`session.create` 先返回一个内存暂定 ID（不落库），历史读取为空，第一次 `session.prompt` 才创建真实会话（同一 ID、回放原始创建参数）。只打开面板不说话，会在会话库/GUI 里不留任何痕迹。 |
 
@@ -45,6 +47,25 @@ npx @deepseek-ai/dsh@0.2.0-rc.2 web
 
 安装器会把已解压扩展复制到 `~/.dsh/browser-extension` 并打开 `chrome://extensions`。在 Chrome 中加载这个稳定目录，然后使用侧边栏。扩展会自动发现回环连接，无需输入 token；非回环部署仍需要配置的 bearer token。
 
+## 面板驱动的 Host 方法
+
+除了纯网关透传（`rpc`），适配器还组合了侧栏需要的若干 Host 方法。它们是面板操作输入区权限/模型/命令/Skill 的唯一词汇，且从不会作为工具暴露给模型。
+
+| 面板方法 | payload | 宿主侧工作 | 结果 |
+|---|---|---|---|
+| `permission.catalog` | `{}` | `permissionPresets/catalog` | `{ options, defaultOptions, defaultPreset }` |
+| `session.permissions` | `{ sessionId }` | 目录 + 该会话的 `permissions` 投影 | `{ current, defaultPreset, options, defaultOptions, routable, provisional }` |
+| `session.setPermission` | `{ sessionId, preset }` | 校验预设后执行 `commands/execute` 的 `/permission <preset>` | `{ preset, commandId, result }` |
+| `commands.list` | `{ sessionId }` | 以会话 agent 为作用域的 `commands/list` | `{ commands: [{ name, description, hint?, definitionId? }], provisional }` |
+| `commands.execute` | `{ sessionId, line }` | 附件列表为空的 `commands/execute` | `{ commandId, result }`；未知命令行返回 `bad-request` |
+| `skills.list` | `{ sessionId }` | 该会话组合的 `skills/list` | `{ skills: [{ name, description, whenToUse?, modelInvocable, path? }], provisional }` |
+
+失败语义：未挂载权限服务的宿主会让 `session.permissions` 返回 `routable: false` 而不是报错，面板据此隐藏控件；部署的桥未实现某方法时返回 `not-found`（`… is unavailable`），使较新的面板可以降级而不是崩掉。`commands.execute` 会拒绝不符合宿主命令语法的行，宿主返回的未知命令名会被报告为 `bad-request`，而不是空成功。
+
+## 延后创建（deferred Sessions）
+
+`deferSessionCreate`（默认 `true`）让 `session.create` 返回临时 id，并在第一条 `session.prompt` 时才真正创建会话。输入区方法遵循这一点：临时 id 的 `session.permissions` 用进程目录加已记住的选择作答，`session.setPermission` 记录该选择，materialize 时在模型选择之前、第一条提示词准入之前重放 `/permission <preset>`（失败会让该提示词留在队列中重试，而不是在错误的策略下运行）。`commands.list` 与 `skills.list` 需要真实 agent，因此临时 id 返回空并带 `provisional: true`；`commands.execute` 只接受权限切换，其余返回 `provisional-session`。
+
 ## 安全模型
 
 - 桥路径在 `/api` 信任栅栏**之外**（栅栏只罩 client-connection 注册的路由），因此自带 bearer token 认证：首帧必须是 `hello`（5 秒内），常量时间比对，失败即断开。
@@ -70,6 +91,20 @@ npx @deepseek-ai/dsh@0.2.0-rc.2 web
 | `browser_click` / `browser_type` / `browser_press` | 按稳定编号操作清单元素。 |
 | `browser_scroll` / `browser_navigate` / `browser_open_tab` / `browser_back` / `browser_forward` / `browser_reload` | 页面移动。 |
 | `browser_get_text` / `browser_wait` | 读区域文本 / 稳定检测。 |
+
+### 开发者工具（高权限）
+
+该组只在已连接的扩展声明 `devTools` 能力时注册——Chrome 构建会声明，Firefox 构建不会。扩展对每次调用保留自己的同意门槛：除非用户在侧栏设置里打开**允许开发者工具**，否则每次调用都会在侧栏弹出审批（仅允许这一次 / 本次会话信任 / 拒绝）。"完全控制浏览器"开关与持久化的 origin 白名单**都不会**覆盖这一组。
+
+| 工具 | 用途 |
+|---|---|
+| `browser_devtools_elements` | 按 CSS 选择器或 `browser_snapshot` 编号查看元素（计算样式、盒模型、命中规则、属性）。 |
+| `browser_devtools_set_element_style` / `browser_devtools_set_element_attribute` | 现场调试 CSS（内联样式或命中的样式表规则）与读取/设置/删除单个属性。可执行脚本的属性会被拒绝。 |
+| `browser_console_eval` / `browser_console_logs` | 在页面自身上下文执行 JavaScript（可选等待 Promise），并读取附加后记录的控制台输出。 |
+| `browser_devtools_network` | 对受控标签页开始 / 停止 / 查询网络抓包。 |
+| `browser_devtools_list_requests` / `browser_devtools_get_request` / `browser_devtools_request_body` | 列出已捕获请求、查看单条完整内容、获取请求或响应正文。凭据类请求头（`Authorization`、`Cookie` 等）默认脱敏，除非单次调用显式选择；疑似认证 URL 的正文默认脱敏。 |
+
+抓包说明：Chrome 同一标签页只允许一个调试器，因此附加期间浏览器自带的开发者工具无法在该标签页打开，错误信息会点明这一原因。抓包数据保存在内存中且有上限（200 条请求、500 条控制台记录），附加时与每次顶层导航时都会重置。所有返回的页面数据都视为不可信输入。
 
 ## 模型体验
 

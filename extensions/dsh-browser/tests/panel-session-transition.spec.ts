@@ -70,6 +70,8 @@ describe('panel session transitions', () => {
         .mockResolvedValueOnce(undefined)
         .mockRejectedValueOnce(new Error('runtime port unavailable')),
       updateSettings: vi.fn(async () => {}),
+      onDevToolsStatus: vi.fn(() => unsubscribe),
+      detachDevTools: vi.fn(async () => undefined),
       requestStatus: vi.fn(async () => {}),
     }
 
@@ -123,7 +125,7 @@ describe('panel session transitions', () => {
       return result.value
     })
     await renderConnected(null)
-    const trigger = document.querySelector<HTMLButtonElement>('.composer-model-trigger')!
+    const trigger = document.querySelector<HTMLButtonElement>('.composer-model .composer-chip-trigger')!
     expect(trigger.textContent).toContain('Saved model')
     await act(async () => { trigger.click() })
     const option = [...document.querySelectorAll<HTMLButtonElement>('[role="option"]')]

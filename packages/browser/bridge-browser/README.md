@@ -6,6 +6,7 @@ The **browser-operation bridge** for dsh: mounts a token-authenticated WebSocket
 
 **Text-only browser tools, multimodal chat passthrough**: page snapshots stay structured text (title, main content, numbered interactive inventory, and masked form fields), and every browser action uses stable inventory numbers. The generic RPC carrier also passes dsh 0.2.0 image prompts and durable attachment reads; deferred new sessions expose image limits only when the host actually mounts the attachment service.
 
+
 ## Config
 
 | Key | Type | Default | Description |
@@ -14,6 +15,7 @@ The **browser-operation bridge** for dsh: mounts a token-authenticated WebSocket
 | `toolTimeoutMs` | `number` | 90000 | Per-tool-call budget, leaving time for the extension's 60-second approval window. |
 | `snapshotMaxChars` | `number` | 32000 | Upper bound on one rendered snapshot's characters, minimum 500 (also negotiated to the extension via `hello.ok` caps). |
 | `maxInteractiveItems` | `number` | 60 | Upper bound on interactive inventory items per snapshot. |
+| `devToolsMaxChars` | `number` | 24000 | Upper bound on one developer-tools result's characters, minimum 500. |
 | `sessionWorkspacePath` | `string` | `~/.dsh/browser-sessions` | Dedicated Host Workspace for extension-created sessions. The plugin creates and idempotently registers the directory on the first implicit `session.create`; the session cwd becomes this path, so the GUI shows a `browser-sessions` workspace group. Set `""` to keep sessions Ungrouped. |
 | `deferSessionCreate` | `boolean` | `true` | Sessions materialize only on the first message: `session.create` answers with a provisional id (nothing persisted), history reads empty, and the first `session.prompt` creates the real session (same id, original payload). Opening the panel without chatting leaves zero trace in the session store/GUI. |
 
@@ -45,6 +47,43 @@ npx @deepseek-ai/dsh@0.2.0-rc.2 web
 
 The installer copies the unpacked extension to `~/.dsh/browser-extension` and opens `chrome://extensions`. Load that stable directory in Chrome and use the side panel. Loopback connections are discovered automatically and require no token entry; non-loopback deployments still require the configured bearer token.
 
+## Host methods the panel drives
+
+Beyond plain gateway passthrough (`rpc`), the adapter composes a few Host
+methods the side panel needs. They are the panel's only vocabulary for the
+composer's permission, model, command, and skill controls, and they are never
+offered to the model as tools.
+
+| Panel method | Payload | Host work | Result |
+|---|---|---|---|
+| `permission.catalog` | `{}` | `permissionPresets/catalog` | `{ options, defaultOptions, defaultPreset }` |
+| `session.permissions` | `{ sessionId }` | the catalog plus the Session's `permissions` projection | `{ current, defaultPreset, options, defaultOptions, routable, provisional }` |
+| `session.setPermission` | `{ sessionId, preset }` | validates the preset, then `commands/execute` with `/permission <preset>` | `{ preset, commandId, result }` |
+| `commands.list` | `{ sessionId }` | `commands/list` scoped to the Session's agent | `{ commands: [{ name, description, hint?, definitionId? }], provisional }` |
+| `commands.execute` | `{ sessionId, line }` | `commands/execute` with the empty attachment list | `{ commandId, result }`; an unknown line is a `bad-request` |
+| `skills.list` | `{ sessionId }` | `skills/list` for the Session composition | `{ skills: [{ name, description, whenToUse?, modelInvocable, path? }], provisional }` |
+
+Failure semantics: a Host that does not mount the permission service answers
+`session.permissions` with `routable: false` instead of failing, so the panel
+can hide the control; a method the deployed bridge does not implement answers
+`not-found` (`… is unavailable`), which lets a newer panel degrade instead of
+breaking. `commands.execute` refuses a line without the Host command grammar,
+and an unknown command name from the Host is reported as `bad-request` rather
+than an empty success.
+
+## Deferred Sessions
+
+`deferSessionCreate` (default `true`) answers `session.create` with a
+provisional id and materializes the real Session on the first `session.prompt`.
+Composer methods respect that: a provisional id answers `session.permissions`
+from the process catalog plus the remembered choice, `session.setPermission`
+records the choice, and materialization replays `/permission <preset>` before
+the model selection and before the first prompt is admitted (a failure keeps
+the prompt queued for retry instead of running it under the wrong policy).
+`commands.list` and `skills.list` need a real agent, so a provisional id
+answers empty with `provisional: true`; `commands.execute` accepts only the
+permission switch and answers `provisional-session` for everything else.
+
 ## Security model
 
 - The bridge route lives **outside** the `/api` trust fence (which only guards client-connection's routes), so it carries its own bearer-token authentication: the first frame must be `hello` with the token within 5s, verified in constant time. Failed auth closes the socket.
@@ -70,6 +109,20 @@ Each `respond` carries a globally unique transport id as well as the host intera
 | `browser_click` / `browser_type` / `browser_press` | Operate inventory items by stable index. |
 | `browser_scroll` / `browser_navigate` / `browser_open_tab` / `browser_back` / `browser_forward` / `browser_reload` | Page movement. |
 | `browser_get_text` / `browser_wait` | Read regions / settle detection. |
+
+### Developer tools (high privilege)
+
+This group is registered only while the connected extension advertises the `devTools` capability, which Chrome builds do and Firefox builds do not. The extension keeps its own consent in front of every call: unless the user turned on **Allow developer tools** in the side-panel settings, each call asks in the side panel (allow once / trust for this session / deny). The blanket browser-control switch and the persistent origin allowlist deliberately do **not** cover this group.
+
+| Tool | Purpose |
+|---|---|
+| `browser_devtools_elements` | Inspect an element (computed CSS, box model, matched rules, attributes) by CSS selector or `browser_snapshot` index. |
+| `browser_devtools_set_element_style` / `browser_devtools_set_element_attribute` | Live-debug CSS on an element (inline style or the matched stylesheet rule) and read/set/remove one attribute. Script-capable attributes are refused. |
+| `browser_console_eval` / `browser_console_logs` | Run JavaScript in the page's own context (optionally awaiting a promise) and read the console output recorded since attach. |
+| `browser_devtools_network` | Start/stop/status network capture for the controlled tab. |
+| `browser_devtools_list_requests` / `browser_devtools_get_request` / `browser_devtools_request_body` | List captured requests, read one in full, and fetch a request or response body. Credential headers (`Authorization`, `Cookie`, …) are redacted unless the caller opts in per call, and bodies of authentication-shaped URLs are redacted by default. |
+
+Capture notes: Chrome allows only one debugger per tab, so the browser's own DevTools cannot stay open on a tab while capture is attached; the error names that cause. Capture is in-memory, bounded (200 requests, 500 console entries) and resets on attach and on every top-level navigation. All returned page data is untrusted input.
 
 ## Model Experience
 
