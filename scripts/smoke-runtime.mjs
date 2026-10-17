@@ -202,14 +202,12 @@ try {
   assert.ok((await rpc('session.list', {})).items.some(item => item.sessionId === sessionId))
   const reopened = (await rpc('session.history', { sessionId })).events
   assert.deepEqual(reopened.slice(0, history.events.length), history.events)
-  // Graceful disposal durably cancels the still-unclaimed browser snapshot.
-  // Its original V4 insertion must survive restart unchanged before that row.
+  // dsh 0.2.1 disposes an Agent with `keepInbox: true`, so the still-unclaimed
+  // browser snapshot survives a graceful restart instead of being canceled by a
+  // shutdown splice. Nothing may follow the original V4 insertion: a canceled
+  // row here would mean the pending page context was silently dropped.
   const shutdown = reopened.slice(history.events.length)
-  assert.equal(shutdown.length, 1)
-  assert.equal(shutdown[0].event.type, 'agent/inbox/spliced')
-  assert.deepEqual(shutdown[0].event.data, {
-    target: 'next-step', start: 0, removedCount: 1, inserted: [], outcome: 'canceled',
-  })
+  assert.equal(shutdown.length, 0, `restart must not cancel pending input: ${JSON.stringify(shutdown)}`)
   const reopenedLegacy = await rpc('session.history', { sessionId: legacySessionId })
   // Following a cold Session activates it after the opening snapshot and may
   // append seed/permission metadata. The migrated history prefix stays exact.

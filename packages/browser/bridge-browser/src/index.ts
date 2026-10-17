@@ -152,9 +152,11 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
   const gateway = ctx.get('typertGateway') as unknown as GatewayCandidate | undefined
   const connection = ctx.get('connection') as unknown as HostConnectionLike | undefined
   if (gateway === undefined || !hasRemoteWireStream(gateway)) {
-    throw new Error('bridge-browser: dsh 0.2.0-rc.1 or a compatible newer runtime is required (Gateway wireStream unavailable)')
+    throw new Error('bridge-browser: dsh 0.2.1-rc.2 or a compatible newer runtime is required (Gateway wireStream unavailable)')
   }
-  if (connection === undefined) throw new Error('bridge-browser: dsh connection service is required')
+  if (connection === undefined || typeof connection.createPeer !== 'function') {
+    throw new Error('bridge-browser: dsh 0.2.1-rc.2 or a compatible newer runtime is required (connection.createPeer unavailable)')
+  }
   const tokenRes = await resolveToken(resolved.token)
   mountBridge(ctx, resolved, tokenRes, createRemoteHostApi(gateway, connection))
 }
