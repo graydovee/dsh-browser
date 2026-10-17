@@ -48,15 +48,27 @@ bash scripts/install.sh                 # 安装/升级：构建并复制到 ~/.
 ## Commit & Pull Request Guidelines
 
 - 提交信息沿用现有风格：`feat|fix|docs|test|chore(scope): 中文摘要`，保持单次提交范围收敛、可独立回滚。
-- **每个功能分支合入前必须更新 changelog**（见下《CHANGELOG 规则》）；漏更新的分支不视为可合入。
+- **合入顺序见下《分支与合入流程》**；changelog 的写法见《CHANGELOG 规则》，漏更新 changelog 的分支不视为可合入。
 - PR 按 `.github/PULL_REQUEST_TEMPLATE.md` 填写：说明改动、验证命令与结果、平台/浏览器影响范围。
+
+### 分支与合入流程
+
+开发与合入固定走四步，顺序不要颠倒：
+
+1. **开新分支开发**：从 `main` 切出新分支做功能开发（`feat/…` / `fix/…`），不要直接在 `main` 上改。
+2. **合入 `omdsh-dev/dsh-browser` 分支**：功能完成、`pnpm typecheck && pnpm test` 通过后，把功能分支合入 `omdsh-dev/dsh-browser`。这条分支是对上游 `omdsh-dev/dsh-browser` 的 PR 承载分支（PR #121），只带产品改动——源码、测试、文档；`CHANGELOG`、`AGENTS.md`、fork 的发布/更新源接线、版本号 bump 都不进这条分支。
+3. **修改 changelog**：合入 `omdsh-dev/dsh-browser` 之后更新 changelog——在该分支对应的 PR 里回复追加条目，同时同步 `main` 上的 `CHANGELOG.md` / `CHANGELOG.zh-CN.md`。
+4. **合入 `main`（即 master）**：changelog 定稿后，再把 `omdsh-dev/dsh-browser` 合入 `main`。`main` 是本地发布与 `main` 分支跟随上游的基准，不要跳过第 3 步直接合。
+
+- `omdsh-dev/dsh-browser` 不要删除、改名或强推：它是 PR 的 head 分支；需要重整提交时改为在上面追加提交。
+- 上游恢复维护、PR 合入后，把上游 `main` 合回本仓库 `main`，`omdsh-dev/dsh-browser` 分支再按下一轮功能重新积攒。
 
 ### CHANGELOG 规则
 
-- **每个功能分支合入前必须更新 `CHANGELOG.md` / `CHANGELOG.zh-CN.md`；漏更新的分支不视为可合入。**
+- **changelog 的更新时机是"功能分支合入 `omdsh-dev/dsh-browser` 之后、合入 `main` 之前"**（见《分支与合入流程》第 3 步）；缺 changelog 的合并不视为完成。
 - 记录逐版本的用户可见变化，最新在前；依赖版本、纯配置与纯文档调整不记。这些约束属于本文件，不要写进 changelog 正文。
 - **中英双语成对**：`CHANGELOG.md` 是英文主版本（默认页），`CHANGELOG.zh-CN.md` 是中文版本；两者地位相同，同一次改动必须同时更新两侧，条目一一对应。
-- **一个功能分支（一次合并）只写一条条目**：同一分支的后续提交**改写**这条条目（补全范围、修正措辞），而不是新增；只有另起一个分支做另一件事才新增条目。条目在分支合入前定稿。
+- **一个功能分支（一次合并）只写一条条目**：同一分支的后续提交**改写**这条条目（补全范围、修正措辞），而不是新增；只有另起一个分支做另一件事才新增条目。条目在合入 `main` 前定稿。
 - **写功能，不写实现**：条目是给使用者看的，用一到两句话概括"多了什么能力 / 修好了什么"，不要写实现细节（方法名、内部模块与字段名、协议名、文件路径、commit hash、代码标识符）。细节留在 PR 说明里。
 - 每条条目一行、日期倒序：英文 `* YYYY-MM-DD [Fix/Feature/Refactor] Summary`，中文 `* YYYY-MM-DD [Fix/Feature/Refactor] 摘要`。只用 `Fix`、`Feature`、`Refactor` 三种标签，测试覆盖并入对应条目而不是单独成条。
 - 按已发布版本分组（`## v0.x.y`，与 git tag 一致）；已打 tag 的段落冻结，永不新增条目。
