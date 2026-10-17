@@ -88,7 +88,7 @@ powershell scripts/install.ps1          # 安装/升级（Windows）：同上，
 1. **开新分支开发**：从 `main` 切出新分支做功能开发（`feat/…` / `fix/…`），不要直接在 `main` 上改。
 2. **合入 `omdsh-dev/dsh-browser` 分支**：功能完成、`pnpm typecheck && pnpm test` 通过后，把功能分支合入 `omdsh-dev/dsh-browser`。这条分支是对上游 `omdsh-dev/dsh-browser` 的 PR 承载分支（PR #121），只带产品改动——源码、测试、文档；`CHANGELOG`、`AGENTS.md`、fork 的发布/更新源接线、版本号 bump 都不进这条分支。
 3. **同步 PR 的描述与评论**（每次合入都必须做，漏了视同没合入）：
-   - **描述里的 changelog 与 changelog 文件一致**：直接照搬 `CHANGELOG.md` / `CHANGELOG.zh-CN.md` 的条目，并**按版本分组**（`## v0.x.y`，新版本段落放在最上面；同一版本内英文条目在前、中文条目在后，逐条对应）。描述只放 changelog 条目，不写实现细节；新增功能时先写文件条目，再原样同步到描述。
+   - **描述里只放中文 changelog 条目，不按版本分组**：直接照搬 `CHANGELOG.zh-CN.md` 的条目并按日期倒序平铺——上游仓库的版本号与 fork 不同步，因此描述里不出现 `## v0.x.y` 之类的版本段落，也不写英文条目；描述开头加一个指向 fork 的 `CHANGELOG.zh-CN.md` 超链接（`https://github.com/graydovee/dsh-browser/blob/main/CHANGELOG.zh-CN.md`）。描述只放 changelog 条目，不写实现细节；新增功能时先写文件条目，再原样同步到描述。
    - **一条独立评论详述该功能**：在 PR 里发一条评论，用固定结构写清这个功能——`概述 / 动机 / 改动内容 / 测试 / 影响范围`（中英双语小标题）。评论按合入时间正序排列，一条评论对应一条 changelog，后续功能依次往下追加，不改写已有评论。
    - 同时同步 `main` 上的 `CHANGELOG.md` / `CHANGELOG.zh-CN.md`（写法见《CHANGELOG 规则》）。
 4. **合入 `main`（即 master）**：changelog 定稿后，再把 `omdsh-dev/dsh-browser` 合入 `main`。`main` 是本地发布与 `main` 分支跟随上游的基准，不要跳过第 3 步直接合。
