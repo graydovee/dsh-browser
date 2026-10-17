@@ -48,7 +48,7 @@ afterEach(async () => {
 })
 
 /**
- * Minimal structural implementation of the dsh 0.1.5 Host seams. Focused
+ * Minimal structural implementation of the dsh 0.2.1 Host seams. Focused
  * Remote-adapter tests pin the argument and stream contracts separately; this
  * fixture verifies Loader injection, real sockets, and real Session storage.
  */
@@ -58,7 +58,13 @@ const RemoteApiHost = {
   apply(ctx: Context, config: { cwd: string }): void {
     const gateway = {
       wireStream: {
-        async open(endpoint: string, _payload: unknown, signal: AbortSignal): Promise<AsyncIterable<unknown>> {
+        async open(
+          endpoint: string,
+          _payload: unknown,
+          _uplink: AsyncIterable<unknown>,
+          _peer: unknown,
+          signal: AbortSignal,
+        ): Promise<AsyncIterable<unknown>> {
           if (endpoint === '$events') {
             return {
               async *[Symbol.asyncIterator]() {
@@ -77,7 +83,8 @@ const RemoteApiHost = {
           details: {},
         }),
       },
-      async invoke(request: { namespace: string; method: string; args: Record<string, unknown> }) {
+      async invoke(request: { namespace: string; method: string; args: Record<string, unknown>; peer: unknown }) {
+        if (request.peer === undefined) throw new Error('composition hosts must name the calling Peer')
         if (request.namespace === 'session' && request.method === 'create') {
           const payload = request.args.request as { sessionId?: string; cwd?: string }
           const session = ctx.sessions.create(
@@ -102,13 +109,24 @@ const RemoteApiHost = {
     }
     const connection = {
       createSharedFetchHandler: () => ({
-        fetch: async (request: Request) => {
+        fetch: async (request: Request, _peer: unknown) => {
           const envelope = await request.json() as { rpcId: string }
           return Response.json({
             type: 'server-response', rpcId: envelope.rpcId, result: { ok: true },
           })
         },
       }),
+      createPeer: (options: { principal: { kind: string }; interactions?: string }) => {
+        if (options.principal.kind !== 'owner') throw new Error('the bridge speaks for the local operator')
+        const lifetime = new AbortController()
+        return {
+          id: `peer-${crypto.randomUUID()}`,
+          principal: options.principal,
+          interactions: options.interactions ?? 'answer',
+          signal: lifetime.signal,
+          dispose: async () => { lifetime.abort(new Error('composition Peer disposed')) },
+        }
+      },
     }
     ctx.provide('typertGateway' as never, gateway as never)
     ctx.provide('connection' as never, connection as never)

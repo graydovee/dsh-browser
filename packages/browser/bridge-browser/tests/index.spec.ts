@@ -18,7 +18,10 @@ function stubContext(): Context {
     invoke: async () => undefined,
   }
   const connection = {
-    createSharedFetchHandler: () => ({ fetch: async () => new Response('not found', { status: 404 }) }),
+    createSharedFetchHandler: () => ({
+      fetch: async (_request: Request, _peer: unknown) => new Response('not found', { status: 404 }),
+    }),
+    createPeer: () => ({ signal: new AbortController().signal, dispose: async () => {} }),
   }
   return {
     webServer: { port: 0, registerUpgrade: () => () => {}, register: () => () => {} },
@@ -93,7 +96,18 @@ describe('apply', () => {
     const get = ctx.get.bind(ctx)
     vi.spyOn(ctx, 'get').mockImplementation((key) => key === 'typertGateway' ? gateway : get(key))
     const register = vi.spyOn(ctx.webServer, 'registerUpgrade')
-    await expect(apply(ctx, { token: 'fixed-token', ...VALID })).rejects.toThrow(/dsh 0\.2\.0-rc\.1.*wireStream unavailable/)
+    await expect(apply(ctx, { token: 'fixed-token', ...VALID })).rejects.toThrow(/dsh 0\.2\.1-rc\.2.*wireStream unavailable/)
+    expect(register).not.toHaveBeenCalled()
+  })
+
+  it('rejects a Connection without the in-process Peer factory', async () => {
+    const ctx = stubContext()
+    const get = ctx.get.bind(ctx)
+    vi.spyOn(ctx, 'get').mockImplementation((key) => key === 'connection'
+      ? { createSharedFetchHandler: () => ({ fetch: async () => new Response(null, { status: 404 }) }) }
+      : get(key))
+    const register = vi.spyOn(ctx.webServer, 'registerUpgrade')
+    await expect(apply(ctx, { token: 'fixed-token', ...VALID })).rejects.toThrow(/createPeer unavailable/)
     expect(register).not.toHaveBeenCalled()
   })
 
