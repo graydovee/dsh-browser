@@ -7,7 +7,7 @@
 * 2026-10-18 [Feature] The side panel finds a local dsh again even when DSH Desktop moves it to a new random port on every launch, says "No service found" instead of retrying forever, and offers a Detect button that lists every local instance so you can pick one.
 
 ## v0.1.6
-* 2026-10-17 [Fix] Work with dsh 0.2.1: the plugin loads and runs on the new release again, the plugin page shows its own title, description, and icon, and the page snapshot taken when you follow a tab survives a dsh restart instead of being discarded.
+* 2026-10-17 [Fix] Work with dsh 0.2.1: the plugin loads and runs on the new release again, and the plugin page shows its own title, description, and icon.
 
 ## v0.1.5
 * 2026-10-16 [Feature] The side panel's composer can now switch the conversation's permission mode (Read only / Workspace edits / Full access, with a confirmation before Full access), pick the model and its reasoning effort, and run a host command or a skill from a `/` menu. The model control stays usable while a reply is streaming, and an unrecognized slash command is refused with the draft kept instead of being sent as an ordinary message.
