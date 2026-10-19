@@ -409,6 +409,7 @@ describe('real Loader composition', () => {
     expect(tools.get('browser_devtools_network')).toBeDefined()
     expect(tools.get('browser_console_eval')).toBeDefined()
     // The plugin echoes the negotiated developer-tools capability back.
+    await waitFor(() => capabilityClient.frames.some((frame) => frame.t === 'hello.ok'))
     const ack = capabilityClient.frames.find((frame) => frame.t === 'hello.ok')
     expect(ack).toMatchObject({ caps: { devTools: { version: 1 } } })
 
