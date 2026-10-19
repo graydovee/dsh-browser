@@ -10,9 +10,13 @@
  * in order, so a machine running several dsh instances keeps them all
  * discoverable.
  *
- * Hardening: binds loopback only, sends no CORS headers (a web page cannot read
- * the answer), rejects a foreign `Host` header (DNS rebinding), and carries
- * nothing secret — the bridge WebSocket still authenticates every client.
+ * Hardening: binds loopback only, rejects a foreign `Host` header (DNS
+ * rebinding), and carries nothing secret — the bridge WebSocket still
+ * authenticates every client. Answers (and the `OPTIONS` preflight) carry the
+ * wildcard CORS headers Chromium 142+ / Edge 143+ Local Network Access requires
+ * of a loopback fetch, so a local page can read the same topology the beacon
+ * already advertises; that is not a credential and the WebSocket still refuses
+ * clients without a pinned extension origin or the bearer token.
  *
  * @module @yuxianglin/dsh-bridge-browser/src/discovery-beacon
  */
@@ -23,6 +27,7 @@ import {
   bridgeConfigPayload,
   type BridgeInstanceInfo,
 } from './protocol.ts'
+import { answerDiscoveryPreflight, DISCOVERY_CORS_HEADERS } from './discovery-cors.ts'
 
 /** Options for {@link startDiscoveryBeacon}. */
 export interface DiscoveryBeaconOptions {
@@ -150,16 +155,20 @@ function answer(
     return finish(res, 400)
   }
   if (pathname !== BRIDGE_CONFIG_PATH) return finish(res, 404)
+  if (answerDiscoveryPreflight(req.method, res)) return
   if (req.method !== 'GET' && req.method !== 'HEAD') {
-    return finish(res, 405, { allow: 'GET, HEAD' })
+    return finish(res, 405, { allow: 'GET, HEAD', ...DISCOVERY_CORS_HEADERS })
   }
   const hostPort = typeof options.hostPort === 'function' ? options.hostPort() : options.hostPort
-  if (hostPort === undefined || !Number.isInteger(hostPort) || hostPort < 1) return finish(res, 503)
+  if (hostPort === undefined || !Number.isInteger(hostPort) || hostPort < 1) {
+    return finish(res, 503, DISCOVERY_CORS_HEADERS)
+  }
   const body = JSON.stringify(bridgeConfigPayload(hostPort, options.info, true))
   finish(res, 200, {
     'content-type': 'application/json',
     'cache-control': 'no-store',
     'content-length': String(Buffer.byteLength(body)),
+    ...DISCOVERY_CORS_HEADERS,
   }, req.method === 'HEAD' ? undefined : body)
 }
 

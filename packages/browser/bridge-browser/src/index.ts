@@ -41,6 +41,7 @@ import {
   MIN_SNAPSHOT_MAX_CHARS,
 } from './protocol.ts'
 import { isLoopbackBindAddress, startDiscoveryBeacon, type DiscoveryBeacon } from './discovery-beacon.ts'
+import { answerDiscoveryPreflight, DISCOVERY_CORS_HEADERS } from './discovery-cors.ts'
 import { withSessionDeferral } from './session-deferral.ts'
 import { withSessionWorkspace } from './session-workspace.ts'
 import { purgeSessionFiles, type SessionPurgeDeps } from './session-purge.ts'
@@ -299,24 +300,19 @@ function mountBridge(
       // fetch to loopback through the CORS checks, so the discovery response
       // carries the headers and answers the preflight. The payload holds no
       // secret, and authentication still happens on the WebSocket handshake.
-      const cors = {
-        'access-control-allow-origin': '*',
-        'access-control-allow-methods': 'GET, OPTIONS',
-        'access-control-allow-private-network': 'true',
-      }
-      if (req.method === 'OPTIONS') {
-        res.writeHead(204, cors)
-        res.end()
-        return
-      }
+      if (answerDiscoveryPreflight(req.method, res)) return
       const port = hostPort()
       if (port === undefined) {
-        res.writeHead(503, cors)
+        res.writeHead(503, DISCOVERY_CORS_HEADERS)
         res.end()
         return
       }
       const body = JSON.stringify(bridgeConfigPayload(port, INSTANCE_INFO))
-      res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store', ...cors })
+      res.writeHead(200, {
+        'content-type': 'application/json',
+        'cache-control': 'no-store',
+        ...DISCOVERY_CORS_HEADERS,
+      })
       res.end(body)
     },
   }
