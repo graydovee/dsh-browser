@@ -8,10 +8,10 @@
 
 | PR | 作者 | 判定 | 分支 | 源 SHA | fork PR | merge SHA | changelog | 状态 |
 |---|---|---|---|---|---|---|---|---|
-| [#92](https://github.com/omdsh-dev/dsh-browser/pull/92) 滚动内层容器 | @happinessisreal | adopt | `upstream/92-scroll-nested` | `a99933c` | - | - | `## latest` | pending |
-| [#125](https://github.com/omdsh-dev/dsh-browser/pull/125) 新窗口工具 | @zzalancelot | adopt | `upstream/125-open-window` | `2c12f81` | - | - | `## latest` | pending |
-| [#99](https://github.com/omdsh-dev/dsh-browser/pull/99) 发现路由 CORS | @PerryLink | adopt-partial（另需适配 fork 的发现信标） | `upstream/99-discovery-cors` | `fa39152` | - | - | `## latest` | pending |
-| [#110](https://github.com/omdsh-dev/dsh-browser/pull/110) 扩展 origin 白名单 | Toto Leung (@chintoleung) | adopt | `upstream/110-extension-origin-pin` | `a118d3a` | - | - | `## latest` | pending |
+| [#92](https://github.com/omdsh-dev/dsh-browser/pull/92) 滚动内层容器 | @happinessisreal | adopt | `upstream/92-scroll-nested` | `a99933c` | [#8](https://github.com/graydovee/dsh-browser/pull/8) | `213c6093` | `## latest` | merged |
+| [#125](https://github.com/omdsh-dev/dsh-browser/pull/125) 新窗口工具 | @zzalancelot | adopt | `upstream/125-open-window` | `2c12f81` | [#9](https://github.com/graydovee/dsh-browser/pull/9) | `e24a7a87` | `## latest` | merged |
+| [#99](https://github.com/omdsh-dev/dsh-browser/pull/99) 发现路由 CORS | @PerryLink | adopt-partial（另需适配 fork 的发现信标） | `upstream/99-discovery-cors` | `fa39152` | [#11](https://github.com/graydovee/dsh-browser/pull/11) | `648010d3` | `## latest` | merged |
+| [#110](https://github.com/omdsh-dev/dsh-browser/pull/110) 扩展 origin 白名单 | Toto Leung (@chintoleung) | adopt | `upstream/110-extension-origin-pin` | `a118d3a` | [#12](https://github.com/graydovee/dsh-browser/pull/12) | `a7da0763` | `## latest` | merged |
 
 已导入（历史）：[#111](https://github.com/omdsh-dev/dsh-browser/pull/111) 支付/密码字段多段自动填充掩码，merge `06f8179`（2026-10-19）。
 
@@ -85,3 +85,14 @@ git log -1 --format=%B $(gh pr view <num> -R graydovee/dsh-browser --json mergeC
 - 不回滚已合并的导入时用 `git revert -m 1 <merge sha>`，台账改 `reverted` 并写原因。
 - 上游日后合入同一 PR：因保留原 SHA 与作者，`git merge origin/main` 通常是干净的三方合并；异常时用 `git cherry -v origin/main main` 复核并记台账。
 - 上游若 rebase/squash 成新 SHA：内容通常仍自动合并，台账记复核结果。
+
+## 本轮（2026-10-19）适配记录
+
+| 上游 PR | 适配提交 | 适配要点 |
+|---|---|---|
+| #92 | `adapt(upstream): #92`（fork PR #8） | 上游新描述让全部工具描述合计超出 1500 字符预算，压缩 `browser_scroll` 描述，能力说明留在参数文档 |
+| #125 | `adapt(upstream): #125`（fork PR #9） | 新增工具后合计 1577 字符，预算按工具数扩容到 1650，并补「每工具平均 <105 字符」断言 |
+| #99 | 冲突解决 + `adapt(upstream): #99`（fork PR #11） | 保留 fork 的 503/实例元信息语义；抽 `discovery-cors.ts`，把 CORS 与预检同样加到 fork 的发现信标，并补单测与真机冒烟断言 |
+| #110 | 冲突解决 + `adapt(upstream): #110`（fork PR #12） | 版本号保留 fork 的 0.1.6，只接受 manifest `key`；安装脚本与 README 的「pre-0.1.5」提示改为「从旧构建升级」 |
+
+验证记录：每个导入 PR 均通过 `typecheck` / `check:runtime` / `test` / `build`；#99 与 #110 另跑 `node scripts/smoke-runtime.mjs`；#110 的 e2e 在本机真实 Chromium 上跑通 2 个用例。
