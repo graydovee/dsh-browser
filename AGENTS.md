@@ -96,6 +96,20 @@ powershell scripts/install.ps1          # 安装/升级（Windows）：同上，
 - `omdsh-dev/dsh-browser` 不要删除、改名或强推：它是 PR 的 head 分支；需要重整提交时改为在上面追加提交。
 - PR 的标题不列举具体功能（功能会持续增加，列不完），只说明性质与维护方式；具体功能由描述里的 changelog 摘要与逐条评论承载。
 - 上游恢复维护、PR 合入后，把上游 `main` 合回本仓库 `main`（同样走下面的 PR 流程），`omdsh-dev/dsh-browser` 分支再按下一轮功能重新积攒。
+- **例外**：导入上游 `omdsh-dev/dsh-browser` 的第三方 PR 不走这条通路，见下《上游 PR 引入流程》。
+
+### 上游 PR 引入流程
+
+上游停更期间，把上游待合入 PR 搬进本 fork 时，只落 fork `main`，**不进 `omdsh-dev/dsh-browser` 承载分支**——那条分支继续只装 fork 自研功能，避免把别人的工作打包回上游。入口是 fork 内 PR：CI 门禁、公开可审计记录、原作者可见的反向链接、按 PR 回滚，四件事一次拿到。
+
+- **一上游 PR 一 fork PR**：分支 `upstream/<n>-<slug>` 从当前 `main` 切出，base 为 `graydovee/dsh-browser:main`；标题写成 `feat|fix(upstream #<n>): <摘要>`。
+- **只允许 merge commit**：用 `git merge --no-ff` 保留原作者与原始 SHA；禁止 squash 与 rebase（rebase 会让上游日后合入同一 PR 时产生重复提交）。
+- **冲突单独成适配提交**：`adapt(upstream): #<n> <说明>`，不重写上游提交。`scripts/install.*`、`extensions/dsh-browser/src/panel/updates.ts`、版本号、`AGENTS.md`、CI 工作流、`CHANGELOG*` 一律保留 fork 版本；桥/扩展产品代码以上游为准，语义冲突手工合并；`pnpm-lock.yaml` 重新 `pnpm install` 生成，不手工合并。
+- **验证门禁**：`pnpm run typecheck && pnpm run check:runtime && pnpm run test && pnpm run build`；改动 wire/Host/工具契约或认证面的再跑 `node scripts/smoke-runtime.mjs`。上游 CI 红的不直接导入，先修好或 defer。
+- **changelog 随该 PR 提交**：中英各一条（见《CHANGELOG 规则》），条目末尾回填致谢。
+- **PR 正文首段固定**：原始 PR 链接、作者、`Source: origin/pr/<n> @ <sha>`、合并方式、适配说明；其余按 `.github/PULL_REQUEST_TEMPLATE.md` 填（概述/动机/改动内容/测试/影响范围）。
+- **合并后核对与登记**：`git log -1 --format=%B <merge sha>` 确认 `Upstream-PR:` / `Source:` / `Author:` trailer 保留，并在 `.agents/notes/upstream-pr-intake.md` 台账登记（判定、源 SHA、fork PR、merge SHA、changelog、状态）。
+- **不要做的事**：不替上游维护者关闭/合并 PR，不在上游仓库提交任何东西（可选的致谢评论除外），不改远端命名。
 
 ### `main` 分支保护
 
@@ -135,6 +149,7 @@ gh api -X DELETE repos/graydovee/dsh-browser/branches/main/protection
 - 按已发布版本分组（`## v0.x.y`，与 git tag 一致）；已打 tag 的段落冻结，永不新增条目。
 - 新条目只加在最上面的段落。下一个 tag 未定期间用 `## latest`（不存在就新建），发版后再把它改成 tag 名——不要提前猜版本号。
 - 打 tag / 重命名 `## latest` 时只做明确要求的机械步骤，不得自行增加、删除或改写条目内容；条目内容的修改需要显式请求。
+- **致谢尾注**：导入上游贡献者的改动时（见《上游 PR 引入流程》），条目在同一行末尾补尾注——中文 `（感谢 @handle）`，英文 `(thanks @handle)`；不另起条目，也不改写他人已发布的条目。
 - **语言归属与链接**：changelog 的语言版本跟随 README 约定，每个语言的 README 必须链接同语言的 changelog——英文 README 链 `CHANGELOG.md`，中文 README 链 `CHANGELOG.zh-CN.md`；子目录 README 用相对路径（`../../CHANGELOG.zh-CN.md`）。某个组件还没有 README 时，先补出中英两份 README，再在各自 README 中链接对应语言的 changelog。
 
 ## Deployment & Release Safety
