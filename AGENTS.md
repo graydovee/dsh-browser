@@ -13,7 +13,7 @@
 - `main` 最后一次提交 2026-10-01；最后一个 release v0.1.3（2026-09-04）。
 - 9 个 PR 待合入（最早的一个自 2026-09-16 起），13 个 issue 未关闭。
 
-因此本 fork 暂时承担维护：扩展的更新检查与安装脚本指向本 fork（`extensions/dsh-browser/src/panel/updates.ts`、`scripts/install.*`），版本号推进到 v0.1.6。这些属于 fork 专有接线，**不进入对上游的 PR**。
+因此本 fork 暂时承担维护：扩展的更新检查与安装脚本指向本 fork（`extensions/dsh-browser/src/panel/updates.ts`、`scripts/install.*`），版本号推进到 v0.1.7。这些属于 fork 专有接线，**不进入对上游的 PR**。
 
 ### `omdsh-dev/dsh-browser` 分支的作用
 
