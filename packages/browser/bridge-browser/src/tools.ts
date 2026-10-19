@@ -194,7 +194,7 @@ function defineTools(call: Call, options: BrowserToolsOptions): ToolDefinition[]
 
   const scroll = (): ToolDefinition => defineTool({
     name: 'browser_scroll',
-    description: 'Scroll up, down, top, or bottom; amount is optional pixels. Pass index or selector to scroll inside a nested scroll container (an app pane, chat transcript, or modal body) instead of the page.',
+    description: 'Scroll up, down, top, or bottom; amount in pixels. Pass index or selector to scroll a nested container (app pane, modal) instead of the page.',
     parameters: {
       direction: { type: 'string', required: true, enum: ['up', 'down', 'top', 'bottom'], description: 'Scroll direction.' },
       amount: { type: 'number', description: 'Number of pixels to scroll; ignored for top and bottom.' },
