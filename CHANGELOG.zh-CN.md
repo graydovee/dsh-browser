@@ -3,6 +3,7 @@
 [English](CHANGELOG.md) | **中文**
 
 ## latest
+* 2026-10-19 [Fix] 安全修复：本机免 token 连接现在只授予本应用自己的扩展（扩展 id 随安装包固定），其它已安装扩展必须携带 token；从旧构建升级时扩展 id 会变更一次（感谢 @chintoleung）。
 * 2026-10-19 [Fix] 侧栏在 Chrome 142 / Edge 143 起的本地网络访问限制下也能重新发现并连上本机 dsh：发现应答补齐了浏览器要求的跨域头与预检（感谢 @PerryLink）。
 * 2026-10-19 [Feature] 新增 `browser_open_window` 工具：可在新窗口（可选后台打开、不抢焦点）中打开网址并接管为受控页面；同窗口开标签仍用 `browser_open_tab`（感谢 @zzalancelot）。
 * 2026-10-19 [Feature] `browser_scroll` 现在可以滚动页面内的滚动容器（聊天记录、侧栏列表、弹窗正文等），不再只能滚动整页（感谢 @happinessisreal）。
