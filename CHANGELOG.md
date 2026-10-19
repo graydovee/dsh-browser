@@ -3,6 +3,7 @@
 **English** | [中文](CHANGELOG.zh-CN.md)
 
 ## latest
+* 2026-10-19 [Fix] Payment and password fields stay masked even when a checkout form declares a card field with several autofill tokens, so card values no longer reach page snapshots (thanks @chintoleung).
 * 2026-10-18 [Feature] The side panel finds a local dsh again even when DSH Desktop moves it to a new random port on every launch, says "No service found" instead of retrying forever, and offers a Detect button that lists every local instance so you can pick one.
 
 ## v0.1.6
