@@ -6,6 +6,7 @@ import type { Context } from '@deepseek-ai/cordis'
 import { dshHomePath } from '@deepseek-ai/dsh-home-paths'
 import { BEACON_PORTS } from '../src/protocol.ts'
 import { apply, assertPositiveInteger, Config, resolveConfig } from '../src/index.ts'
+import { DEFAULT_TRUSTED_EXTENSION_ORIGINS } from '../src/extension-origins.ts'
 
 /**
  * The beacon opens real sockets; those are covered by discovery-beacon.spec.ts.
@@ -83,9 +84,11 @@ describe('config', () => {
       deferSessionCreate: true,
       beacon: true,
       beaconPorts: [...BEACON_PORTS],
+      trustedExtensionOrigins: [...DEFAULT_TRUSTED_EXTENSION_ORIGINS],
     })
     expect(new Config().sessionWorkspacePath).toBe(dshHomePath('browser-sessions'))
     expect(new Config().beaconPorts).toEqual([...BEACON_PORTS])
+    expect(new Config().trustedExtensionOrigins).toEqual([...DEFAULT_TRUSTED_EXTENSION_ORIGINS])
   })
 
   it('preserves explicit values and the empty-string workspace opt-out', () => {
@@ -97,6 +100,7 @@ describe('config', () => {
       sessionWorkspacePath: '',
       deferSessionCreate: false,
       beacon: false,
+      trustedExtensionOrigins: ['chrome-extension://abcdefghijklmnopabcdefghijklmnop'],
     })).toEqual({
       token: 'fixed',
       toolTimeoutMs: 1,
@@ -107,6 +111,7 @@ describe('config', () => {
       deferSessionCreate: false,
       beacon: false,
       beaconPorts: [...BEACON_PORTS],
+      trustedExtensionOrigins: ['chrome-extension://abcdefghijklmnopabcdefghijklmnop'],
     })
     expect(new Config({ sessionWorkspacePath: '' }).sessionWorkspacePath).toBe('')
   })
@@ -119,6 +124,19 @@ describe('config', () => {
 
   it('keeps an empty port list when the beacon is disabled', () => {
     expect(resolveConfig({ beacon: false, beaconPorts: [] }).beaconPorts).toEqual([])
+  })
+
+  it('rejects trustedExtensionOrigins entries that are not extension origins', () => {
+    // A web origin here would grant that site's pages tokenless loopback
+    // access — the exact trust Finding 1 removed. Malformed entries fail
+    // loudly instead of silently disabling zero-config.
+    for (const bad of ['https://intranet.example', 'chrome-extension://short', 'chrome-extension://abc/', '']) {
+      expect(() => resolveConfig({ trustedExtensionOrigins: [bad] }), bad).toThrow(/trustedExtensionOrigins/)
+    }
+  })
+
+  it('accepts an explicit empty allowlist (hardened fail-closed mode)', () => {
+    expect(resolveConfig({ trustedExtensionOrigins: [] })).toMatchObject({ trustedExtensionOrigins: [] })
   })
 })
 

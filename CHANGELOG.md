@@ -3,6 +3,7 @@
 **English** | [中文](CHANGELOG.zh-CN.md)
 
 ## latest
+* 2026-10-19 [Fix] Security fix: tokenless loopback access is now granted only to this extension (its id is pinned by the installation), so other installed extensions must present the token; upgrading from an older build changes the id once (thanks @chintoleung).
 * 2026-10-19 [Fix] The side panel can discover and connect to a local dsh again under Chrome 142 / Edge 143 Local Network Access: discovery answers now carry the CORS headers and preflight the browser requires (thanks @PerryLink).
 * 2026-10-19 [Feature] New `browser_open_window` tool opens a URL in a new browser window (optionally in the background) and makes it the controlled target; use `browser_open_tab` for a same-window tab (thanks @zzalancelot).
 * 2026-10-19 [Feature] `browser_scroll` can now scroll an app's own scroll container (chat transcripts, side panes, modal bodies) instead of only the page (thanks @happinessisreal).

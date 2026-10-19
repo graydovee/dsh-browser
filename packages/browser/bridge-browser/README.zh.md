@@ -13,6 +13,7 @@ dsh 的**浏览器操作桥**：在宿主 webserver 上挂载一个 **token 认�
 | 键 | 类型 | 默认 | 说明 |
 |---|---|---|---|
 | `token` | `string` | 自动生成 | 固定 bearer token。缺省时首次启动生成，写入 `~/.dsh/ext-bridge-token`（0600）并打印在启动日志。 |
+| `trustedExtensionOrigins` | `string[]` | 随附扩展 id | 允许在回环免 token 的精确 `chrome-extension://<id>` Origin 列表。默认钉住由扩展 manifest `key` 派生的 id（key 是公开的——该钉住只防误连，不防刻意复制 key 的冒充）；其它 Origin 必须携带 token。`[]` 表示完全关闭豁免（加固模式：强制 token 配对）。非法条目会导致启动失败。 |
 | `toolTimeoutMs` | `number` | 90000 | 单次工具调用预算，为扩展的 60 秒审批窗口预留时间。 |
 | `snapshotMaxChars` | `number` | 32000 | 单次快照渲染字符上限，最小为 500（经 `hello.ok` caps 协商给扩展）。 |
 | `maxInteractiveItems` | `number` | 60 | 单次快照交互清单条数上限。 |
@@ -50,7 +51,7 @@ npx @deepseek-ai/dsh@0.2.1-rc.2 web
 
 插件清单自带这层声明：`engines.dsh`（`^0.2.1-rc.2`）与 `dsh.manifestVersion: 1` 让 dsh 在加载插件前就拒绝不兼容的宿主；插件页会直接读取 `locale/en.json` / `locale/zh.json` 里的标题与简介、以及 `icon.svg` 图标来展示，无需激活插件。
 
-安装器会把已解压扩展复制到 `~/.dsh/browser-extension` 并打开 `chrome://extensions`。在 Chrome 中加载这个稳定目录，然后使用侧边栏。扩展会自动发现回环连接，无需输入 token；非回环部署仍需要配置的 bearer token。
+安装器会把已解压扩展复制到 `~/.dsh/browser-extension` 并打开 `chrome://extensions`。在 Chrome 中加载这个稳定目录，然后使用侧边栏。随附扩展带有固定 manifest `key`，其 id——以及随之的回环免 token 访问——在重装和升级后保持不变。从旧构建升级时 id 会变更一次（设置按 id 存储）：如曾配置远程桥地址与 token，请在面板中重新填写。其它已安装扩展不在豁免之列，必须携带配置的 bearer token；非回环部署始终需要 token。
 
 ## 面板驱动的 Host 方法
 
@@ -78,6 +79,7 @@ npx @deepseek-ai/dsh@0.2.1-rc.2 web
 - 同一时刻仅一个活动连接，新认证连接顶替旧连接。
 - 发现信标（固定回环端口上的 `/ext/bridge-config`）只给出桥地址、宿主 pid 与启动时间：只绑 `127.0.0.1`，对不是 `127.0.0.1`/`localhost:<该端口>` 的 `Host` 头返回 403（防 DNS rebinding），且从不携带 bearer token。宿主绑定非回环地址时整个信标被跳过。
 - 两条发现路由（宿主路由与信标）都带通配 CORS 头并应答 `OPTIONS` 预检：Chrome 142+ / Edge 143+ 的本地网络访问限制会把扩展对回环的 `fetch` 送进 CORS 检查，缺了这些头扩展根本读不到回答。因此本机网页能读到被广播的拓扑信息——那不是凭据，WebSocket 仍要求钉住的扩展 Origin 或 bearer token。
+- 零配置回环只对 `trustedExtensionOrigins` 中的 Origin 免 token（默认：随附扩展由 key 派生的 id）。manifest `key` 是公开的，因此这只*防*误连——刻意复制 key 的扩展会得到相同 id；需要抵御恶意扩展时请设置 `trustedExtensionOrigins: []` 并强制 token 配对。Origin 校验只约束浏览器上下文——任何本地进程都能伪造 `Origin` 头（也能读取 token 文件），真正的边界始终是 bearer token。豁免仅限回环，但在 127.0.0.1 上终结连接的反向代理（`tailscale serve`、`ssh -L`、nginx）会让代理客户端表现为回环——此类拓扑请使用加固模式。
 - 桥是 confused-deputy 边界而非通用认证层：不要把 `dsh web --host 0.0.0.0` 暴露在不信任的网络上。
 - 抽取的页面文字会标记为模型的不可信输入。页面读取遵循扩展的询问/自动/关闭策略；状态变更工具必须经过按 origin 的侧边栏决策，没有侧边栏时失败关闭。同源后续操作可只在当前侧栏会话中临时信任，永久信任仍需显式设置。
 
