@@ -83,20 +83,18 @@ powershell scripts/install.ps1          # 安装/升级（Windows）：同上，
 
 ### 分支与合入流程
 
-开发与合入固定走四步，顺序不要颠倒：
+fork 自研功能的开发与合入按 **`.agents/notes/fork-feature-flow.md`** 执行。遇到以下任一情况先读该文件：
 
-1. **开新分支开发**：从 `main` 切出新分支做功能开发（`feat/…` / `fix/…`），不要直接在 `main` 上改。
-2. **合入 `omdsh-dev/dsh-browser` 分支**：功能完成、`pnpm typecheck && pnpm test` 通过后，把功能分支合入 `omdsh-dev/dsh-browser`。这条分支是对上游 `omdsh-dev/dsh-browser` 的 PR 承载分支（PR #121），只带产品改动——源码、测试、文档；`CHANGELOG`、`AGENTS.md`、fork 的发布/更新源接线、版本号 bump 都不进这条分支。
-3. **同步 PR 的描述与评论**（每次合入都必须做，漏了视同没合入）：
-   - **描述里只放中文 changelog 条目，不按版本分组**：直接照搬 `CHANGELOG.zh-CN.md` 的条目并按日期倒序平铺——上游仓库的版本号与 fork 不同步，因此描述里不出现 `## v0.x.y` 之类的版本段落，也不写英文条目；描述开头加一个指向 fork 的 `CHANGELOG.zh-CN.md` 超链接（`https://github.com/graydovee/dsh-browser/blob/main/CHANGELOG.zh-CN.md`）。描述只放 changelog 条目，不写实现细节；新增功能时先写文件条目，再原样同步到描述。
-   - **一条独立评论详述该功能**：在 PR 里发一条评论，用固定结构写清这个功能——`概述 / 动机 / 改动内容 / 测试 / 影响范围`（中英双语小标题）。评论按合入时间正序排列，一条评论对应一条 changelog，后续功能依次往下追加，不改写已有评论。
-   - 同时同步 `main` 上的 `CHANGELOG.md` / `CHANGELOG.zh-CN.md`（写法见《CHANGELOG 规则》）。
-4. **合入 `main`（即 master）**：changelog 定稿后，再把 `omdsh-dev/dsh-browser` 合入 `main`。`main` 是本地发布与 `main` 分支跟随上游的基准，不要跳过第 3 步直接合；**`main` 已开启分支保护，只能通过 PR 合入**（见《`main` 分支保护》）。
+- 新开 `feat/…` / `fix/…` 功能分支，或把功能分支的提交合入承载分支 `omdsh-dev/dsh-browser`；
+- 更新上游 PR #121 的描述或评论；
+- 给 `main` 开 PR，或在合并前把 `main` 追平到 PR 分支；
+- 处理 `CHANGELOG` / `README.i18n.yaml` 冲突，或判断某项改动是否属于「产品改动」。
 
-- `omdsh-dev/dsh-browser` 不要删除、改名或强推：它是 PR 的 head 分支；需要重整提交时改为在上面追加提交。
-- PR 的标题不列举具体功能（功能会持续增加，列不完），只说明性质与维护方式；具体功能由描述里的 changelog 摘要与逐条评论承载。
-- 上游恢复维护、PR 合入后，把上游 `main` 合回本仓库 `main`（同样走下面的 PR 流程），`omdsh-dev/dsh-browser` 分支再按下一轮功能重新积攒。
-- **例外**：导入上游 `omdsh-dev/dsh-browser` 的第三方 PR 不走这条通路，见下《上游 PR 引入流程》。
+三项固定事实：
+
+- 承载分支 `omdsh-dev/dsh-browser` 是对上游的 PR 承载分支（PR #121 的 head）。
+- 上游恢复维护、PR 合入后，把上游 `main` 合回本仓库 `main`（同样走 `main` 的 PR），`omdsh-dev/dsh-browser` 再按下一轮功能重新积攒。
+- 导入上游第三方 PR 走另一条通路，见下《上游 PR 引入流程》。
 
 ### 上游 PR 引入流程
 
@@ -113,13 +111,7 @@ fork 仓库 `graydovee/dsh-browser` 的 `main` 已开启 classic branch protecti
 - 禁止强推（force push）与删除 `main`；新提交会作废已有的 review approval。
 - 未要求 status checks、签名提交与线性历史——测试执行力仍靠本文《Testing Guidelines》约束，不是靠 GitHub 拦。
 
-因此 `main` 不能本地合并后直推，标准做法是从 `main` 切分支 → 提交 → 推到 fork → 开 PR 到 `graydovee/dsh-browser:main` → 合并：
-
-```sh
-git push fork <branch>
-gh pr create --repo graydovee/dsh-browser --base main --head <branch> --fill
-gh pr merge --repo graydovee/dsh-browser <branch> --merge --delete-branch
-```
+因此 `main` 只能从分支开 PR 合入；自研功能与上游导入两条通路的 PR 步骤分别见 `.agents/notes/fork-feature-flow.md` 第 5 步和 `.agents/notes/upstream-pr-flow.md` 第 4 节。
 
 - 本机 `gh` 配了两个账号（`dujiahui-agora`、`graydovee`），操作本仓库前先 `gh auth switch --user graydovee` 并确认 `gh api user --jq .login` 返回 `graydovee`。
 - `gh` 的令牌在 macOS 钥匙串里，受限沙箱读不到（会表现为 `The token in default is invalid` / 401），需要在可访问钥匙串的环境执行。
@@ -133,7 +125,7 @@ gh api -X DELETE repos/graydovee/dsh-browser/branches/main/protection
 
 ### CHANGELOG 规则
 
-- **changelog 的更新时机是"功能分支合入 `omdsh-dev/dsh-browser` 之后、合入 `main` 之前"**（见《分支与合入流程》第 3 步）；缺 changelog 的合并不视为完成。
+- **changelog 的更新时机是"功能分支合入 `omdsh-dev/dsh-browser` 之后、合入 `main` 之前"**（落地方式见 `.agents/notes/fork-feature-flow.md` 第 5 步）；缺 changelog 的合并不视为完成。
 - 记录逐版本的用户可见变化，最新在前；依赖版本、纯配置与纯文档调整不记。这些约束属于本文件，不要写进 changelog 正文。
 - **中英双语成对**：`CHANGELOG.md` 是英文主版本（默认页），`CHANGELOG.zh-CN.md` 是中文版本；两者地位相同，同一次改动必须同时更新两侧，条目一一对应。
 - **一个功能分支（一次合并）只写一条条目**：同一分支的后续提交**改写**这条条目（补全范围、修正措辞），而不是新增；只有另起一个分支做另一件事才新增条目。条目在合入 `main` 前定稿。
