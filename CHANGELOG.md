@@ -4,6 +4,7 @@
 
 ## latest
 * 2026-10-19 [Feature] The page-handoff prompt gains "jump back to the assistant page", which switches the browser back to the page the assistant is working on; the two existing choices are renamed after their subject ("assistant stays on the original page", "assistant follows the current page") so they are easier to tell apart.
+* 2026-10-19 [Feature] New `browser_open_window` tool opens a URL in a new browser window (optionally in the background) and makes it the controlled target; use `browser_open_tab` for a same-window tab (thanks @zzalancelot).
 * 2026-10-19 [Feature] `browser_scroll` can now scroll an app's own scroll container (chat transcripts, side panes, modal bodies) instead of only the page (thanks @happinessisreal).
 * 2026-10-19 [Fix] Payment and password fields stay masked even when a checkout form declares a card field with several autofill tokens, so card values no longer reach page snapshots (thanks @chintoleung).
 * 2026-10-18 [Feature] The side panel finds a local dsh again even when DSH Desktop moves it to a new random port on every launch, says "No service found" instead of retrying forever, and offers a Detect button that lists every local instance so you can pick one.

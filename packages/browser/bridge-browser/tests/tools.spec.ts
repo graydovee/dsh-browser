@@ -113,6 +113,15 @@ describe('registerBrowserTools', () => {
       exec.signal,
       1_000,
     )
+    await run('browser_open_window', { url: 'https://example.com/win' })
+    expect(requestTool).toHaveBeenLastCalledWith('browser_open_window', { url: 'https://example.com/win' }, exec.signal, 1_000)
+    await run('browser_open_window', { url: 'https://example.com/win-bg', focused: false })
+    expect(requestTool).toHaveBeenLastCalledWith(
+      'browser_open_window',
+      { url: 'https://example.com/win-bg', focused: false },
+      exec.signal,
+      1_000,
+    )
 
     await run('browser_list_tabs', {})
     expect(requestTool).toHaveBeenLastCalledWith('browser_list_tabs', {}, exec.signal, 1_000)
@@ -179,7 +188,12 @@ describe('registerBrowserTools', () => {
     const { ctx, bridge, registered } = makeHarness()
     registerBrowserTools(ctx, bridge, { toolTimeoutMs: 5_000, snapshotMaxChars: 12_000, maxInteractiveItems: 60 })
     const descriptionChars = registered.reduce((sum, { definition }) => sum + String(definition.description).length, 0)
-    expect(descriptionChars).toBeLessThan(1_500)
+    // The budget tracks the tool set: upstream added browser_open_window, which
+    // pushed the total from 1466 to 1577. Raise the ceiling by the cost of one
+    // tool rather than dropping the guard; the per-tool average stays ~103
+    // characters, so runaway descriptions still fail.
+    expect(descriptionChars / registered.length).toBeLessThan(105)
+    expect(descriptionChars).toBeLessThan(1_650)
   })
 
   it('exposes optional frame routing on frame-local tools only', () => {
@@ -190,7 +204,7 @@ describe('registerBrowserTools', () => {
       const params = byName.get(name)!.parameters as { properties: { frame?: { type?: unknown } } }
       expect(params.properties.frame?.type).toBe('number')
     }
-    for (const name of ['browser_snapshot', 'browser_navigate', 'browser_open_tab', 'browser_list_tabs', 'browser_follow_tab', 'browser_close_tab', 'browser_back', 'browser_forward', 'browser_reload']) {
+    for (const name of ['browser_snapshot', 'browser_navigate', 'browser_open_tab', 'browser_open_window', 'browser_list_tabs', 'browser_follow_tab', 'browser_close_tab', 'browser_back', 'browser_forward', 'browser_reload']) {
       const params = byName.get(name)!.parameters as { properties: { frame?: unknown } }
       expect(params.properties.frame).toBeUndefined()
     }
