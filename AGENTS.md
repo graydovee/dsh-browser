@@ -91,11 +91,38 @@ powershell scripts/install.ps1          # 安装/升级（Windows）：同上，
    - **描述里只放中文 changelog 条目，不按版本分组**：直接照搬 `CHANGELOG.zh-CN.md` 的条目并按日期倒序平铺——上游仓库的版本号与 fork 不同步，因此描述里不出现 `## v0.x.y` 之类的版本段落，也不写英文条目；描述开头加一个指向 fork 的 `CHANGELOG.zh-CN.md` 超链接（`https://github.com/graydovee/dsh-browser/blob/main/CHANGELOG.zh-CN.md`）。描述只放 changelog 条目，不写实现细节；新增功能时先写文件条目，再原样同步到描述。
    - **一条独立评论详述该功能**：在 PR 里发一条评论，用固定结构写清这个功能——`概述 / 动机 / 改动内容 / 测试 / 影响范围`（中英双语小标题）。评论按合入时间正序排列，一条评论对应一条 changelog，后续功能依次往下追加，不改写已有评论。
    - 同时同步 `main` 上的 `CHANGELOG.md` / `CHANGELOG.zh-CN.md`（写法见《CHANGELOG 规则》）。
-4. **合入 `main`（即 master）**：changelog 定稿后，再把 `omdsh-dev/dsh-browser` 合入 `main`。`main` 是本地发布与 `main` 分支跟随上游的基准，不要跳过第 3 步直接合。
+4. **合入 `main`（即 master）**：changelog 定稿后，再把 `omdsh-dev/dsh-browser` 合入 `main`。`main` 是本地发布与 `main` 分支跟随上游的基准，不要跳过第 3 步直接合；**`main` 已开启分支保护，只能通过 PR 合入**（见《`main` 分支保护》）。
 
 - `omdsh-dev/dsh-browser` 不要删除、改名或强推：它是 PR 的 head 分支；需要重整提交时改为在上面追加提交。
 - PR 的标题不列举具体功能（功能会持续增加，列不完），只说明性质与维护方式；具体功能由描述里的 changelog 摘要与逐条评论承载。
-- 上游恢复维护、PR 合入后，把上游 `main` 合回本仓库 `main`，`omdsh-dev/dsh-browser` 分支再按下一轮功能重新积攒。
+- 上游恢复维护、PR 合入后，把上游 `main` 合回本仓库 `main`（同样走下面的 PR 流程），`omdsh-dev/dsh-browser` 分支再按下一轮功能重新积攒。
+
+### `main` 分支保护
+
+fork 仓库 `graydovee/dsh-browser` 的 `main` 已开启 classic branch protection（`Settings → Branches`，规则名 `main`，只匹配这一条分支）：
+
+- **只能通过 PR 合入**：直接 `git push` 到 `main` 一律被拒；`Do not allow bypassing` 已开启（`enforce_admins`），管理员也没有旁路。
+- **不需要审批**：Required approvals = 0，PR 作者可以直接合并自己的 PR，不会卡在"不能自审"。
+- 禁止强推（force push）与删除 `main`；新提交会作废已有的 review approval。
+- 未要求 status checks、签名提交与线性历史——测试执行力仍靠本文《Testing Guidelines》约束，不是靠 GitHub 拦。
+
+因此 `main` 不能本地合并后直推，标准做法是从 `main` 切分支 → 提交 → 推到 fork → 开 PR 到 `graydovee/dsh-browser:main` → 合并：
+
+```sh
+git push fork <branch>
+gh pr create --repo graydovee/dsh-browser --base main --head <branch> --fill
+gh pr merge --repo graydovee/dsh-browser <branch> --merge --delete-branch
+```
+
+- 本机 `gh` 配了两个账号（`dujiahui-agora`、`graydovee`），操作本仓库前先 `gh auth switch --user graydovee` 并确认 `gh api user --jq .login` 返回 `graydovee`。
+- `gh` 的令牌在 macOS 钥匙串里，受限沙箱读不到（会表现为 `The token in default is invalid` / 401），需要在可访问钥匙串的环境执行。
+- 应急时临时撤掉保护，改完立刻恢复：
+
+```sh
+gh api -X DELETE repos/graydovee/dsh-browser/branches/main/protection
+```
+
+恢复时回到 `Settings → Branches → Add classic branch protection rule`，规则名 `main`、勾选 `Require a pull request before merging` 并取消 `Require approvals`、`Do not allow bypassing`；或把上次的规则导出成 JSON 后用 `gh api -X PUT .../branches/main/protection --input protection.json` 提交，不要只发部分字段（PUT 会用整份规则体覆盖）。
 
 ### CHANGELOG 规则
 
