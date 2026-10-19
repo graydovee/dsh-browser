@@ -112,33 +112,47 @@ async function start(reopen) {
   }, 'host readiness')
   const response = await fetch(`${base}/ext/bridge-config`, { signal: AbortSignal.timeout(10_000) })
   assert.equal(response.status, 200)
+  // Chromium 142+ / Edge 143+ Local Network Access requires the discovery answer
+  // to pass CORS; without these headers the extension cannot read it at all.
+  assert.equal(response.headers.get('access-control-allow-origin'), '*', 'discovery answer carries CORS headers')
+  assert.equal(response.headers.get('access-control-allow-private-network'), 'true')
   const config = await response.json()
   assert.equal(config.wsUrl, base.replace('http:', 'ws:') + '/ext/bridge')
   // The host boots with `--port 0` exactly like DSH Desktop, so the fixed-port
   // discovery beacon is what lets the extension find this run. Its answer must
   // name the same single bridge URL, and it must not expose anything else.
-  const beacon = await (async () => {
+  const beaconAnswers = await (async () => {
     const answers = []
     for (const port of BEACON_PORTS) {
       try {
         const probe = await fetch(`http://127.0.0.1:${port}${BRIDGE_CONFIG_PATH}`, { signal: AbortSignal.timeout(2_000) })
         if (!probe.ok) continue
         const body = await probe.json()
-        if (body?.beacon === true) answers.push(body)
+        if (body?.beacon === true) answers.push({ port, body, headers: probe.headers })
       } catch {
         // No beacon on this candidate port.
       }
     }
-    // A developer machine may run DSH Desktop on an earlier beacon port, and
-    // its answer would otherwise be mistaken for this run's. Prefer the answer
-    // that names the host webserver this smoke actually started; fall back to
-    // the first beacon so a genuine mismatch still fails below.
-    return answers.find(body => body.wsUrl === config.wsUrl) ?? answers[0]
+    return answers
   })()
-  assert.ok(beacon, `no discovery beacon answered on ${BEACON_PORTS.join(', ')}`)
+  // A developer machine may run DSH Desktop on an earlier beacon port, and
+  // its answer would otherwise be mistaken for this run's. Prefer the answer
+  // that names the host webserver this smoke actually started; fall back to
+  // the first beacon so a genuine mismatch still fails below.
+  const beaconAnswer = beaconAnswers.find(entry => entry.body.wsUrl === config.wsUrl) ?? beaconAnswers[0]
+  assert.ok(beaconAnswer, `no discovery beacon answered on ${BEACON_PORTS.join(', ')}`)
+  const beacon = beaconAnswer.body
   assert.equal(beacon.wsUrl, config.wsUrl, 'beacon advertises the only real bridge URL')
   assert.ok(Number.isInteger(beacon.pid) && beacon.pid > 0, 'beacon reports the host process id')
   assert.equal(typeof beacon.startedAt, 'string')
+  assert.equal(beaconAnswer.headers.get('access-control-allow-origin'), '*', 'beacon answer carries CORS headers')
+  assert.equal(beaconAnswer.headers.get('access-control-allow-private-network'), 'true')
+  const beaconPreflight = await fetch(`http://127.0.0.1:${beaconAnswer.port}${BRIDGE_CONFIG_PATH}`, {
+    method: 'OPTIONS',
+    signal: AbortSignal.timeout(2_000),
+  })
+  assert.equal(beaconPreflight.status, 204, 'beacon answers the CORS preflight')
+  assert.equal(beaconPreflight.headers.get('access-control-allow-origin'), '*')
   // Firefox-style origin requires a valid token even on loopback.
   socket = new WebSocket(config.wsUrl, { origin: 'moz-extension://runtime-smoke', handshakeTimeout: 10_000 })
   const frames = []

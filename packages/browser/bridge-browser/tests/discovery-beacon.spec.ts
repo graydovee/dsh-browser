@@ -40,7 +40,7 @@ function send(
   port: number,
   path: string,
   options: { method?: string; host?: string } = {},
-): Promise<{ status: number; body: string }> {
+): Promise<{ status: number; body: string; headers: import('node:http').IncomingHttpHeaders }> {
   return new Promise((resolve, reject) => {
     const headers: Record<string, string> = {}
     if (options.host !== undefined) headers.host = options.host
@@ -54,7 +54,7 @@ function send(
       let body = ''
       res.setEncoding('utf8')
       res.on('data', (chunk: string) => { body += chunk })
-      res.on('end', () => { resolve({ status: res.statusCode ?? 0, body }) })
+      res.on('end', () => { resolve({ status: res.statusCode ?? 0, body, headers: res.headers }) })
     })
     req.on('error', reject)
     req.end()
@@ -150,6 +150,27 @@ describe('startDiscoveryBeacon', () => {
     expect((await send(port, '/ext/bridge')).status).toBe(404)
     expect((await send(port, '/ext/bridge-config', { method: 'POST' })).status).toBe(405)
     expect((await send(port, '/ext/bridge-config', { method: 'HEAD' })).status).toBe(200)
+  })
+
+  it('carries the CORS headers Local Network Access requires', async () => {
+    const port = await freePort()
+    const beacon = await startDiscoveryBeacon({ hostPort: 3080, ports: [port] })
+    if (beacon === undefined) throw new Error('beacon did not bind')
+    beacons.push(beacon)
+
+    // Chromium 142+ / Edge 143+ route the extension's loopback fetch through the
+    // CORS checks; an answer without these headers leaves the panel unable to
+    // discover this instance even though the WebSocket itself would connect.
+    const answer = await send(port, '/ext/bridge-config')
+    expect(answer.status).toBe(200)
+    expect(answer.headers['access-control-allow-origin']).toBe('*')
+    expect(answer.headers['access-control-allow-methods']).toBe('GET, OPTIONS')
+    expect(answer.headers['access-control-allow-private-network']).toBe('true')
+
+    const preflight = await send(port, '/ext/bridge-config', { method: 'OPTIONS' })
+    expect(preflight.status).toBe(204)
+    expect(preflight.headers['access-control-allow-origin']).toBe('*')
+    expect(preflight.headers['access-control-allow-private-network']).toBe('true')
   })
 
   it('rejects a rebound Host header', async () => {
