@@ -76,7 +76,8 @@ npx @deepseek-ai/dsh@0.2.1-rc.2 web
 - 桥路径在 `/api` 信任栅栏**之外**（栅栏只罩 client-connection 注册的路由），因此自带 bearer token 认证：首帧必须是 `hello`（5 秒内），常量时间比对，失败即断开。
 - `/api` 载体钉在回环上的方法（`settings.*`、`credentials.*`、`host.pickDirectory`、`host.openPath`）对非回环来源**即使 token 正确也拒绝**——对 `--host 0.0.0.0` 部署的纵深防御。
 - 同一时刻仅一个活动连接，新认证连接顶替旧连接。
-- 发现信标（固定回环端口上的 `/ext/bridge-config`）只给出桥地址、宿主 pid 与启动时间：只绑 `127.0.0.1`，不发任何 CORS 头（网页能看到连接但读不到内容），对不是 `127.0.0.1`/`localhost:<该端口>` 的 `Host` 头返回 403（防 DNS rebinding），且从不携带 bearer token。宿主绑定非回环地址时整个信标被跳过。
+- 发现信标（固定回环端口上的 `/ext/bridge-config`）只给出桥地址、宿主 pid 与启动时间：只绑 `127.0.0.1`，对不是 `127.0.0.1`/`localhost:<该端口>` 的 `Host` 头返回 403（防 DNS rebinding），且从不携带 bearer token。宿主绑定非回环地址时整个信标被跳过。
+- 两条发现路由（宿主路由与信标）都带通配 CORS 头并应答 `OPTIONS` 预检：Chrome 142+ / Edge 143+ 的本地网络访问限制会把扩展对回环的 `fetch` 送进 CORS 检查，缺了这些头扩展根本读不到回答。因此本机网页能读到被广播的拓扑信息——那不是凭据，WebSocket 仍要求钉住的扩展 Origin 或 bearer token。
 - 桥是 confused-deputy 边界而非通用认证层：不要把 `dsh web --host 0.0.0.0` 暴露在不信任的网络上。
 - 抽取的页面文字会标记为模型的不可信输入。页面读取遵循扩展的询问/自动/关闭策略；状态变更工具必须经过按 origin 的侧边栏决策，没有侧边栏时失败关闭。同源后续操作可只在当前侧栏会话中临时信任，永久信任仍需显式设置。
 

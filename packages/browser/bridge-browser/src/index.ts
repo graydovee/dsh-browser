@@ -41,6 +41,7 @@ import {
   MIN_SNAPSHOT_MAX_CHARS,
 } from './protocol.ts'
 import { isLoopbackBindAddress, startDiscoveryBeacon, type DiscoveryBeacon } from './discovery-beacon.ts'
+import { answerDiscoveryPreflight, DISCOVERY_CORS_HEADERS } from './discovery-cors.ts'
 import { withSessionDeferral } from './session-deferral.ts'
 import { withSessionWorkspace } from './session-workspace.ts'
 import { purgeSessionFiles, type SessionPurgeDeps } from './session-purge.ts'
@@ -294,15 +295,24 @@ function mountBridge(
   const configRoute: WebRoute = {
     kind: 'exact',
     path: BRIDGE_CONFIG_PATH,
-    handler: (_req, res) => {
+    handler: (req, res) => {
+      // Chromium 142+ / Edge 143+ Local Network Access puts the extension's
+      // fetch to loopback through the CORS checks, so the discovery response
+      // carries the headers and answers the preflight. The payload holds no
+      // secret, and authentication still happens on the WebSocket handshake.
+      if (answerDiscoveryPreflight(req.method, res)) return
       const port = hostPort()
       if (port === undefined) {
-        res.writeHead(503)
+        res.writeHead(503, DISCOVERY_CORS_HEADERS)
         res.end()
         return
       }
       const body = JSON.stringify(bridgeConfigPayload(port, INSTANCE_INFO))
-      res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' })
+      res.writeHead(200, {
+        'content-type': 'application/json',
+        'cache-control': 'no-store',
+        ...DISCOVERY_CORS_HEADERS,
+      })
       res.end(body)
     },
   }
