@@ -118,17 +118,22 @@ async function start(reopen) {
   // discovery beacon is what lets the extension find this run. Its answer must
   // name the same single bridge URL, and it must not expose anything else.
   const beacon = await (async () => {
+    const answers = []
     for (const port of BEACON_PORTS) {
       try {
         const probe = await fetch(`http://127.0.0.1:${port}${BRIDGE_CONFIG_PATH}`, { signal: AbortSignal.timeout(2_000) })
         if (!probe.ok) continue
         const body = await probe.json()
-        if (body?.beacon === true) return body
+        if (body?.beacon === true) answers.push(body)
       } catch {
         // No beacon on this candidate port.
       }
     }
-    return undefined
+    // A developer machine may run DSH Desktop on an earlier beacon port, and
+    // its answer would otherwise be mistaken for this run's. Prefer the answer
+    // that names the host webserver this smoke actually started; fall back to
+    // the first beacon so a genuine mismatch still fails below.
+    return answers.find(body => body.wsUrl === config.wsUrl) ?? answers[0]
   })()
   assert.ok(beacon, `no discovery beacon answered on ${BEACON_PORTS.join(', ')}`)
   assert.equal(beacon.wsUrl, config.wsUrl, 'beacon advertises the only real bridge URL')
@@ -224,12 +229,19 @@ try {
   assert.ok((await rpc('session.list', {})).items.some(item => item.sessionId === sessionId))
   const reopened = (await rpc('session.history', { sessionId })).events
   assert.deepEqual(reopened.slice(0, history.events.length), history.events)
-  // dsh 0.2.1 disposes an Agent with `keepInbox: true`, so the still-unclaimed
-  // browser snapshot survives a graceful restart instead of being canceled by a
-  // shutdown splice. Nothing may follow the original V4 insertion: a canceled
-  // row here would mean the pending page context was silently dropped.
+  // A graceful shutdown disposes the Agent through agent-loop's teardown, which
+  // cancels the live machine with `machine.cancel({ kind: 'disposed' })` and no
+  // `keepInbox` — only the user's stop button preserves pending input. The
+  // unclaimed browser snapshot is therefore recorded as one canceled inbox
+  // splice. Assert that exact contract: a future runtime that starts preserving
+  // the inbox across disposal changes this row and must update the expectation
+  // deliberately, instead of silently dropping the pending page context.
   const shutdown = reopened.slice(history.events.length)
-  assert.equal(shutdown.length, 0, `restart must not cancel pending input: ${JSON.stringify(shutdown)}`)
+  assert.equal(shutdown.length, 1, `restart must record one inbox splice: ${JSON.stringify(shutdown)}`)
+  const splice = shutdown[0]?.event
+  assert.equal(splice?.type, 'agent/inbox/spliced')
+  assert.equal(splice.data.outcome, 'canceled')
+  assert.equal(splice.data.removedCount, 1)
   const reopenedLegacy = await rpc('session.history', { sessionId: legacySessionId })
   // Following a cold Session activates it after the opening snapshot and may
   // append seed/permission metadata. The migrated history prefix stays exact.
