@@ -119,6 +119,13 @@ interface TabAffinityRebindResultMessage {
   error?: { code: string; message: string }
 }
 
+interface TabAffinityReturnResultMessage {
+  type: 'tab-affinity.return.result'
+  id: string
+  ok: boolean
+  error?: { code: string; message: string }
+}
+
 interface SelectionMessage {
   type: 'selection'
   selection: unknown
@@ -149,7 +156,7 @@ interface DevToolsDetachResultMessage {
   error?: { message?: unknown }
 }
 
-type BackgroundMessage = RpcResultMessage | RespondResultMessage | SettingsResultMessage | StatusMessage | EventMessage | ApprovalRequestMessage | ApprovalResolvedMessage | TabAffinityMessage | TabAffinityRebindResultMessage | SelectionMessage | SessionResumeHintMessage | DevToolsStatusMessage | DevToolsDetachResultMessage | DiscoveryProgressMessage | DiscoveryResultMessage
+type BackgroundMessage = RpcResultMessage | RespondResultMessage | SettingsResultMessage | StatusMessage | EventMessage | ApprovalRequestMessage | ApprovalResolvedMessage | TabAffinityMessage | TabAffinityRebindResultMessage | TabAffinityReturnResultMessage | SelectionMessage | SessionResumeHintMessage | DevToolsStatusMessage | DevToolsDetachResultMessage | DiscoveryProgressMessage | DiscoveryResultMessage
 
 /** Structured gateway failure retained for product-level error handling. */
 export class PanelRpcError extends Error {
@@ -188,6 +195,14 @@ export interface PanelApi {
   respondToApproval(id: string, decision: ApprovalDecision): Promise<void>
   resolveTabAffinity(revision: number, decision: TabAffinityDecision, sessionId: string | null): Promise<void>
   rebindTabAffinity(): Promise<void>
+  /**
+   * Move the user's visible tab back to the page the assistant is bound to.
+   *
+   * `revision` is the affinity state the panel acted on; the background refuses
+   * a stale value so an outdated button cannot jump the user's page, and the
+   * rejection carries `code: 'stale-revision'` for the caller to ignore.
+   */
+  returnToControlledTab(revision: number): Promise<void>
   /** Clear all selection state, or only the exact selection supplied. */
   clearSelection(selection?: PageSelection): Promise<void>
   /** Enumerate every local dsh instance; progress streams through {@link onDiscoveryProgress}. */
@@ -215,6 +230,10 @@ export function connectPanel(): PanelApi {
     reject: (error: Error) => void
   }>()
   const pendingRebinds = new Map<string, {
+    resolve: () => void
+    reject: (error: Error) => void
+  }>()
+  const pendingReturns = new Map<string, {
     resolve: () => void
     reject: (error: Error) => void
   }>()
@@ -328,6 +347,18 @@ export function connectPanel(): PanelApi {
           ?? (getUiLocale() === 'zh' ? '无法绑定当前标签页' : 'Failed to bind the current tab')))
         break
       }
+      case 'tab-affinity.return.result': {
+        const entry = pendingReturns.get(msg.id)
+        if (entry === undefined) return
+        pendingReturns.delete(msg.id)
+        if (msg.ok) entry.resolve()
+        else entry.reject(new PanelRpcError(
+          typeof msg.error?.code === 'string' ? msg.error.code : 'return-failed',
+          msg.error?.message
+            ?? (getUiLocale() === 'zh' ? '无法跳转回助手页面' : 'Failed to jump back to the assistant page'),
+        ))
+        break
+      }
       case 'session.resume-hint':
         for (const listener of sessionResumeHintListeners) listener(msg.sessionId)
         break
@@ -358,7 +389,7 @@ export function connectPanel(): PanelApi {
     return cause instanceof Error ? cause : new Error(fallback)
   }
 
-  function failAll(error: Error, preserve?: { kind: 'rpc' | 'respond' | 'rebind' | 'settings' | 'devtools' | 'scan'; id: string }): void {
+  function failAll(error: Error, preserve?: { kind: 'rpc' | 'respond' | 'rebind' | 'return' | 'settings' | 'devtools' | 'scan'; id: string }): void {
     for (const [id, entry] of pending) {
       if (preserve?.kind === 'rpc' && preserve.id === id) continue
       entry.reject(error)
@@ -374,6 +405,11 @@ export function connectPanel(): PanelApi {
       if (preserve?.kind === 'rebind' && preserve.id === id) continue
       entry.reject(error)
       pendingRebinds.delete(id)
+    }
+    for (const [id, entry] of pendingReturns) {
+      if (preserve?.kind === 'return' && preserve.id === id) continue
+      entry.reject(error)
+      pendingReturns.delete(id)
     }
     for (const [id, entry] of pendingSettings) {
       if (preserve?.kind === 'settings' && preserve.id === id) continue
@@ -424,7 +460,7 @@ export function connectPanel(): PanelApi {
   function invalidate(
     stale: chrome.runtime.Port,
     error: Error,
-    preserve?: { kind: 'rpc' | 'respond' | 'rebind' | 'settings' | 'devtools' | 'scan'; id: string },
+    preserve?: { kind: 'rpc' | 'respond' | 'rebind' | 'return' | 'settings' | 'devtools' | 'scan'; id: string },
   ): void {
     if (port !== stale) return
     port = null
@@ -439,7 +475,7 @@ export function connectPanel(): PanelApi {
    */
   function send(
     message: unknown,
-    preserve?: { kind: 'rpc' | 'respond' | 'rebind' | 'settings' | 'devtools' | 'scan'; id: string },
+    preserve?: { kind: 'rpc' | 'respond' | 'rebind' | 'return' | 'settings' | 'devtools' | 'scan'; id: string },
   ): Promise<void> {
     const current = port
     if (current !== null) {
@@ -568,6 +604,21 @@ export function connectPanel(): PanelApi {
         ).catch((cause: unknown) => {
           if (pendingRebinds.get(id) !== entry) return
           pendingRebinds.delete(id)
+          reject(connectionError(cause))
+        })
+      })
+    },
+    returnToControlledTab(revision) {
+      const id = crypto.randomUUID()
+      return new Promise<void>((resolve, reject) => {
+        const entry = { resolve, reject }
+        pendingReturns.set(id, entry)
+        void send(
+          { type: 'tab-affinity.return', id, revision },
+          { kind: 'return', id },
+        ).catch((cause: unknown) => {
+          if (pendingReturns.get(id) !== entry) return
+          pendingReturns.delete(id)
           reject(connectionError(cause))
         })
       })
