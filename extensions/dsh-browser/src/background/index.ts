@@ -15,6 +15,7 @@
  *   panel → bg: { type: 'approval.response', id, decision }
  *   panel → bg: { type: 'tab-affinity.response', revision, decision, sessionId }
  *   panel → bg: { type: 'tab-affinity.rebind', id }
+ *   panel → bg: { type: 'tab-affinity.return', id, revision }
  *   panel → bg: { type: 'panel.window', windowId }
  *   panel → bg: { type: 'selection.clear', selection? }
  *   panel → bg: { type: 'request-status' }
@@ -35,6 +36,7 @@
  *   bg → panel: { type: 'selection', selection }
  *   bg → panel: { type: 'tab-affinity', state }
  *   bg → panel: { type: 'tab-affinity.rebind.result', id, ok, error? }
+ *   bg → panel: { type: 'tab-affinity.return.result', id, ok, error? }
  *
  * @module
  */
@@ -372,6 +374,17 @@ class TabAffinityRebindError extends Error {
   constructor(readonly code: 'no-active-tab' | 'timeout' | 'cancelled', message: string) {
     super(message)
     this.name = 'TabAffinityRebindError'
+  }
+}
+
+/** Stable failures of one explicit "jump back to the assistant page" request. */
+class TabAffinityReturnError extends Error {
+  constructor(
+    readonly code: 'stale-revision' | 'no-controlled-tab' | 'lost' | 'focus-failed' | 'activate-failed',
+    message: string,
+  ) {
+    super(message)
+    this.name = 'TabAffinityReturnError'
   }
 }
 
@@ -1222,6 +1235,74 @@ async function resolveTabAffinityResponse(response: {
   }
 }
 
+/**
+ * Bring the user's own visible tab back to the page the assistant is bound to.
+ *
+ * This is the only path that moves the user's visible tab, and it only runs
+ * after an explicit click. The binding never changes: the controlled tab is
+ * still exactly the page the user already approved, so observing it as the
+ * active tab resolves the handoff back to `following` without widening what any
+ * tool may touch. Every failure leaves the binding and the visible tab alone
+ * (except a vanished tab, which fails closed into `lost`).
+ */
+async function returnToControlledTab(revision: number, panelWindowId: number | undefined): Promise<void> {
+  await affinityReady
+  const state = tabAffinity.snapshot()
+  const controlled = state.controlled
+  if (controlled === null) {
+    throw new TabAffinityReturnError('no-controlled-tab', getUiLocale() === 'zh'
+      ? '助手没有可返回的页面'
+      : 'The assistant has no page to return to')
+  }
+  if (state.revision !== revision) {
+    throw new TabAffinityReturnError('stale-revision', getUiLocale() === 'zh'
+      ? '标签页状态已变化，请重新选择'
+      : 'The tab state changed, so this choice no longer applies')
+  }
+  const tabId = controlled.tabId
+  let live: chrome.tabs.Tab
+  try {
+    // Read the tab itself rather than the snapshot: the user may have dragged it
+    // into another window since the binding was recorded.
+    live = await chrome.tabs.get(tabId)
+  } catch {
+    // The approved page is gone: fail closed and let every panel show `lost`.
+    const affectedSessions = tabAffinity.sessionIdsForTab(tabId)
+    if (tabAffinity.removeTab(tabId)) {
+      for (const sid of affectedSessions) {
+        activeFollowRefreshes.get(sid)?.controller.abort()
+        cancelPendingApprovals(sid)
+      }
+      persistTabAffinity()
+      broadcastTabAffinity()
+    }
+    throw new TabAffinityReturnError('lost', getUiLocale() === 'zh'
+      ? '受控标签页已关闭，无法返回'
+      : 'The controlled tab was closed, so there is no page to return to')
+  }
+  if (panelWindowId === undefined || live.windowId !== panelWindowId) {
+    try {
+      await chrome.windows.update(live.windowId, { focused: true })
+    } catch {
+      throw new TabAffinityReturnError('focus-failed', getUiLocale() === 'zh'
+        ? '无法切换到助手页面所在的窗口'
+        : 'The window holding the assistant page could not be focused')
+    }
+  }
+  try {
+    await chrome.tabs.update(tabId, { active: true })
+  } catch {
+    throw new TabAffinityReturnError('activate-failed', getUiLocale() === 'zh'
+      ? '无法切换到助手页面'
+      : 'The assistant page could not be activated')
+  }
+  // Chrome also emits tabs.onActivated, but that path only accepts activations
+  // from the focused window. Observing the tab directly keeps the state
+  // deterministic for the panel that is waiting on this acknowledgement.
+  const observed = await chrome.tabs.get(tabId).then(summarizeTab, () => null)
+  if (observed !== null) observeActiveSummary(observed)
+}
+
 /** Move browser control to the current tab only after a fresh, valid query. */
 async function rebindTabAffinityToActive(signal: AbortSignal, sessionId?: string): Promise<void> {
   await abortable(Promise.all([affinityReady, pageSessionContexts.ready]).then(() => undefined), signal)
@@ -1751,6 +1832,9 @@ chrome.runtime.onConnect.addListener((port) => {
     controller: AbortController
     timer: ReturnType<typeof setTimeout>
   }>()
+  // In-flight "jump back to the assistant page" requests. Activation is
+  // idempotent, but a double click must not race two acknowledgements.
+  const tabAffinityReturns = new Set<string>()
   panelPorts.add(port)
   if (wasIdle) armBridgeKeepalive()
   void settingsReady.then(syncSelectionWatch)
@@ -2030,6 +2114,43 @@ chrome.runtime.onConnect.addListener((port) => {
         })
         break
       }
+      case 'tab-affinity.return': {
+        const request = message as { id?: unknown; revision?: unknown }
+        if (typeof request.id !== 'string') break
+        const requestId = request.id
+        if (tabAffinityReturns.has(requestId)) break
+        if (typeof request.revision !== 'number') {
+          try {
+            port.postMessage({
+              type: 'tab-affinity.return.result',
+              id: requestId,
+              ok: false,
+              error: { code: 'bad-request', message: 'the tab affinity revision is missing' },
+            })
+          } catch { /* port closed */ }
+          break
+        }
+        tabAffinityReturns.add(requestId)
+        void returnToControlledTab(request.revision, panelWindows.get(port)).then(
+          () => {
+            try { port.postMessage({ type: 'tab-affinity.return.result', id: requestId, ok: true }) } catch { /* port closed */ }
+          },
+          (error: unknown) => {
+            try {
+              port.postMessage({
+                type: 'tab-affinity.return.result',
+                id: requestId,
+                ok: false,
+                error: {
+                  code: error instanceof TabAffinityReturnError ? error.code : 'return-failed',
+                  message: error instanceof Error ? error.message : String(error),
+                },
+              })
+            } catch { /* port closed */ }
+          },
+        ).finally(() => { tabAffinityReturns.delete(requestId) })
+        break
+      }
       case 'request-status':
         try {
           port.postMessage({ type: 'status', state: bridge?.state ?? ('stopped' as BridgeState), caps })
@@ -2060,6 +2181,7 @@ chrome.runtime.onConnect.addListener((port) => {
         : 'The background connection was lost, so tab binding was cancelled'))
     }
     tabAffinityRebinds.clear()
+    tabAffinityReturns.clear()
     const panelWindowId = panelWindows.get(port)
     const panelSessionId = panelActiveSessions.get(port)
     panelActiveSessions.delete(port)

@@ -303,6 +303,27 @@ textarea:focus-visible {
   color: var(--ink);
 }
 
+/* Navigating the user's own tab is its own decision, so it owns a full-width
+   row above the two binding answers instead of competing with them. */
+.tab-affinity-actions .return {
+  flex: 1 0 100%;
+  border: 1px solid var(--blue);
+  background: var(--surface);
+  color: var(--blue);
+}
+
+.tab-affinity-actions .return:hover {
+  background: #f2f5ff;
+}
+
+.tab-affinity-actions .return:disabled {
+  border-color: var(--line-strong);
+  background: var(--surface);
+  color: var(--muted);
+  cursor: default;
+  transform: none;
+}
+
 .tab-affinity-actions .keep:hover {
   border-color: #b6c0d0;
   background: #f8fafc;

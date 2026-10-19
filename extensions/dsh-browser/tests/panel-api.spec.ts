@@ -182,6 +182,55 @@ describe('panel protocol', () => {
     await expect(pending).rejects.toThrow('current tab unavailable')
   })
 
+  it('sends the revision it was shown when jumping back to the assistant page', async () => {
+    let receive: ((message: unknown) => void) | undefined
+    const postMessage = vi.fn()
+    const port = {
+      postMessage,
+      onMessage: { addListener: vi.fn((listener: (message: unknown) => void) => { receive = listener }) },
+      onDisconnect: { addListener: vi.fn() },
+    }
+    vi.stubGlobal('chrome', { runtime: { connect: vi.fn(() => port) } })
+    vi.spyOn(crypto, 'randomUUID').mockReturnValue('12345678-1234-4234-8234-123456789ac0')
+    const api = connectPanel()
+
+    const pending = api.returnToControlledTab(7)
+    expect(postMessage).toHaveBeenCalledWith({
+      type: 'tab-affinity.return',
+      id: '12345678-1234-4234-8234-123456789ac0',
+      revision: 7,
+    })
+
+    receive?.({
+      type: 'tab-affinity.return.result',
+      id: '12345678-1234-4234-8234-123456789ac0',
+      ok: true,
+    })
+    await expect(pending).resolves.toBeUndefined()
+  })
+
+  it('keeps the failure code of a refused jump back so a stale click stays silent', async () => {
+    let receive: ((message: unknown) => void) | undefined
+    const port = {
+      postMessage: vi.fn(),
+      onMessage: { addListener: vi.fn((listener: (message: unknown) => void) => { receive = listener }) },
+      onDisconnect: { addListener: vi.fn() },
+    }
+    vi.stubGlobal('chrome', { runtime: { connect: vi.fn(() => port) } })
+    vi.spyOn(crypto, 'randomUUID').mockReturnValue('12345678-1234-4234-8234-123456789ac1')
+    const api = connectPanel()
+
+    const pending = api.returnToControlledTab(7)
+    receive?.({
+      type: 'tab-affinity.return.result',
+      id: '12345678-1234-4234-8234-123456789ac1',
+      ok: false,
+      error: { code: 'stale-revision', message: 'the tab state changed' },
+    })
+
+    await expect(pending).rejects.toMatchObject({ code: 'stale-revision', message: 'the tab state changed' })
+  })
+
   it('delivers a resume hint and records the panel session', () => {
     let receive: ((message: unknown) => void) | undefined
     const postMessage = vi.fn()
