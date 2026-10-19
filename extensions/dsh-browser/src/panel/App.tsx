@@ -28,6 +28,7 @@ import {
   stepUiScale,
   uiScaleAtLimit,
 } from './ui-scale.ts'
+import { canReturnToControlledTab } from './tab-handoff.ts'
 import { QuestionCard } from './QuestionCard.tsx'
 import { UpdateCard } from './UpdateCard.tsx'
 import { MessageImages } from './MessageImages.tsx'
@@ -461,10 +462,14 @@ function TabAffinityBanner({
   state,
   copy,
   onDecision,
+  onReturn,
+  returnPending,
 }: {
   state: TabAffinityState | null
   copy: PanelCopy
   onDecision: (decision: TabAffinityDecision) => void
+  onReturn: () => void
+  returnPending: boolean
 }): React.JSX.Element | null {
   if (state === null || state.status === 'unbound' || state.status === 'following') return null
   const controlled = tabLabel(state.controlled, copy.tabHandoff.closedTab)
@@ -503,6 +508,17 @@ function TabAffinityBanner({
       </div>
       <p>{body}</p>
       <div className="tab-affinity-actions">
+        {canReturnToControlledTab(state) && (
+          <button
+            type="button"
+            className="return"
+            onClick={onReturn}
+            disabled={returnPending}
+            aria-busy={returnPending}
+          >
+            {copy.tabHandoff.returnToAssistant}
+          </button>
+        )}
         {handoff && <button className="keep" onClick={() => onDecision('keep')}>{copy.tabHandoff.keep}</button>}
         {state.active !== null && (
           <button className="follow" onClick={() => onDecision('follow')}>
@@ -745,6 +761,7 @@ export function App(): React.JSX.Element {
   const [showTextSize, setShowTextSize] = useState(false)
   const [approvalQueue, setApprovalQueue] = useState<ApprovalRequest[]>([])
   const [tabAffinity, setTabAffinity] = useState<TabAffinityState | null>(null)
+  const [tabAffinityReturnPending, setTabAffinityReturnPending] = useState(false)
   const [trustedOriginInput, setTrustedOriginInput] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [showSessionPicker, setShowSessionPicker] = useState(false)
@@ -2375,6 +2392,25 @@ export function App(): React.JSX.Element {
     }
   }
 
+  /**
+   * Ask the background to move this browser's visible tab back to the page the
+   * assistant is bound to. A stale revision means the user already switched
+   * again; the fresh state is on its way, so that case stays silent.
+   */
+  async function returnToControlledTab(): Promise<void> {
+    if (tabAffinity === null || tabAffinityReturnPending) return
+    setTabAffinityReturnPending(true)
+    try {
+      await api.returnToControlledTab(tabAffinity.revision)
+    } catch (cause) {
+      if (!(cause instanceof PanelRpcError && cause.code === 'stale-revision')) {
+        setError(cause instanceof Error ? cause.message : String(cause))
+      }
+    } finally {
+      setTabAffinityReturnPending(false)
+    }
+  }
+
   function addTrustedOrigin(): void {
     const origin = normalizeWebOrigin(trustedOriginInput)
     if (origin === null) return
@@ -2828,7 +2864,13 @@ export function App(): React.JSX.Element {
           onStep={(direction) => changeUiScale(stepUiScale(uiScaleRef.current, direction))}
           onReset={() => changeUiScale(DEFAULT_UI_SCALE)} />
       )}
-      <TabAffinityBanner state={tabAffinity} copy={copy} onDecision={decideTabAffinity} />
+      <TabAffinityBanner
+        state={tabAffinity}
+        copy={copy}
+        onDecision={decideTabAffinity}
+        onReturn={returnToControlledTab}
+        returnPending={tabAffinityReturnPending}
+      />
       {showSessionPicker && (
         <section className="session-picker" aria-label={copy.app.sessions}>
           <div className="session-picker-head">
