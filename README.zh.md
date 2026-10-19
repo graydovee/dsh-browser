@@ -106,7 +106,7 @@ Windows 请运行：
 $s="$env:TEMP\dsh-install.ps1"; irm https://raw.githubusercontent.com/graydovee/dsh-browser/refs/heads/main/scripts/install.ps1 -OutFile $s; powershell -NoProfile -ExecutionPolicy Bypass -File $s
 ```
 
-安装器会下载 `main`、构建并注册桥插件、把 Chrome 扩展构建到 `~/.dsh/browser-extension`，然后打开 `chrome://extensions`。首次安装时，请把该目录作为已解压扩展加载；更新时点击**重新加载**。如果 dsh 已在运行，请重启。从 0.1.5 之前的版本更新请注意：扩展固定了 manifest `key`，其 id（及按 id 存储的设置）会变更一次——如曾配置远程桥地址与 token，请在面板中重新填写。
+安装器会下载 `main`、构建并注册桥插件、把 Chrome 扩展构建到 `~/.dsh/browser-extension`，然后打开 `chrome://extensions`。首次安装时，请把该目录作为已解压扩展加载；更新时点击**重新加载**。如果 dsh 已在运行，请重启。从旧构建更新请注意：扩展固定了 manifest `key`，其 id（及按 id 存储的设置）会变更一次——如曾配置远程桥地址与 token，请在面板中重新填写。
 
 `scripts/install.sh` 覆盖 macOS 与 Linux，`scripts/install.ps1` 覆盖 Windows；两者写入同一个托管工作区和同一份安装元数据。当系统提供剪贴板工具（`pbcopy`、`wl-copy`、`xclip`、`xsel` 或 PowerShell 的 `Set-Clipboard`）时，安装器会把扩展路径复制到剪贴板；无论是否复制成功都会打印该路径。若未检测到 Chrome/Chromium，安装器会打印对应的安装命令；设置 `DSH_INSTALL_BROWSER=1` 可让安装器尝试自动安装。
 
