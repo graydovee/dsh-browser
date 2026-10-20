@@ -35,7 +35,7 @@
 
 - `extensions/dsh-browser/` — Chrome/Firefox MV3 扩展：`src/panel/`（侧栏 React 界面）、`src/background/`（service worker/事件页：桥连接、RPC 客户端、工具分发）、`src/content/`（页面快照、动作、隐私与划选）、`src/security/`（审批与可信来源）、`tests/`（vitest）。
 - `packages/browser/bridge-browser/` — dsh 插件 `@yuxianglin/dsh-bridge-browser`：`src/` 是源码（`protocol.ts` 为两端共享的 wire 契约真源），`tests/`（vitest），`lib/` 是构建产物。
-- `scripts/` — `install.sh` / `install.ps1`（构建 + 注册 profile + 复制扩展产物）、`smoke-runtime.mjs`（真机冒烟）、`check-runtime.mjs`、`fixtures/`。
+- `scripts/` — `install.sh` / `install.ps1`（构建 + 注册 profile + 复制扩展产物）、`release.sh`（发版：构建并发布三个预构建资产）、`smoke-runtime.mjs`（真机冒烟）、`check-runtime.mjs`、`fixtures/`。
 - `benchmark/` — 快照与工具集基准；`.agents/notes/` — 设计决策记录（`implemented/` 下的既有结论优先于推测）。
 - `CHANGELOG.md` / `CHANGELOG.zh-CN.md` — 逐版本用户可见变化（英文主版本 / 中文版本），按功能而非提交记录。
 - `.github/PULL_REQUEST_TEMPLATE.md` — PR 模板。
@@ -134,6 +134,7 @@ gh api -X DELETE repos/graydovee/dsh-browser/branches/main/protection
 - 按已发布版本分组（`## v0.x.y`，与 git tag 一致）；已打 tag 的段落冻结，永不新增条目。
 - 新条目只加在最上面的段落。下一个 tag 未定期间用 `## latest`（不存在就新建），发版后再把它改成 tag 名——不要提前猜版本号。
 - 打 tag / 重命名 `## latest` 时只做明确要求的机械步骤，不得自行增加、删除或改写条目内容；条目内容的修改需要显式请求。
+- **打完 tag 必须建 GitHub Release**（三个预构建资产），步骤见《发布流程（tag → GitHub Release）》；只有 tag 不发 Release 不算发版，插件市场读不到产物。
 - **致谢尾注**：导入上游贡献者的改动时（见《上游 PR 引入流程》），条目在同一行末尾补尾注——中文 `（感谢 @handle）`，英文 `(thanks @handle)`；不另起条目，也不改写他人已发布的条目。
 - **语言归属与链接**：changelog 的语言版本跟随 README 约定，每个语言的 README 必须链接同语言的 changelog——英文 README 链 `CHANGELOG.md`，中文 README 链 `CHANGELOG.zh-CN.md`；子目录 README 用相对路径（`../../CHANGELOG.zh-CN.md`）。某个组件还没有 README 时，先补出中英两份 README，再在各自 README 中链接对应语言的 changelog。
 
@@ -143,3 +144,20 @@ gh api -X DELETE repos/graydovee/dsh-browser/branches/main/protection
 - `scripts/install.sh`（macOS/Linux）与 `scripts/install.ps1`（Windows）会构建产物、把桥插件 link 进 `web` profile，并同步到 `~/.dsh/browser-extension`；改动安装流程前先在本机跑通一次完整安装，且两边行为保持一致。
 - 生效边界：桥插件改动需要重启对应 dsh 进程（`dsh web` 或 DSH Desktop），扩展改动需要在 `chrome://extensions` 重新加载；只重载扩展不会更新已在内存中运行的桥插件。
 - 部署后可用桥探测或 `node scripts/smoke-runtime.mjs` 确认新方法已就绪，再交付给用户。
+
+### 发布流程（tag → GitHub Release）
+
+完整步骤、资产契约与排障见 **`.agents/notes/release.md`**。三条不可协商的规则：
+
+- **打完 tag 必须建 Release**：`git tag` 只是一个提交指针，用户看不到也装不了；只有 tag 没有 Release 不算发版。
+- **每个 Release 都挂齐三个预构建资产，名字固定**：`dsh-bridge-browser.tgz`（带 `lib/` 的桥插件）、`dsh-browser-extension.tgz`（Chrome/Edge）、`dsh-browser-extension-firefox.tgz`（Firefox）。
+- **资产名不带版本号**：外部引用（awesome 条目、插件市场的安装命令）用的是 `https://github.com/graydovee/dsh-browser/releases/latest/download/dsh-bridge-browser.tgz`；`latest` 只在请求时解析，文件名是照字面取的——名字带版本号会在下一次发版时静默 404。
+
+发布是一条命令（构建 + 打包 + 建 Release + 校验资产可达）：
+
+```sh
+git tag -a vX.Y.Z -m "vX.Y.Z" && git push fork vX.Y.Z
+bash scripts/release.sh vX.Y.Z          # --dry-run 只构建并打包，不发布
+```
+
+为什么必须发布产物：桥插件的 `lib/` 是构建产物、不入库，`dsh plugin add github:graydovee/dsh-browser#path:/packages/browser/bridge-browser` 会装出一个没有 `lib/` 的包（加载时报 `ERR_MODULE_NOT_FOUND …/lib/index.js`）；能一行装的是 Release 里的 `dsh-bridge-browser.tgz`。浏览器扩展则只能由用户在 `chrome://extensions` / `about:debugging` 里以「已解压扩展」加载，没有任何命令能代劳，所以扩展产物也必须在同一个 Release 里备好。
