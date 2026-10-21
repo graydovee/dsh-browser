@@ -50,7 +50,7 @@ interface SettingsResultMessage {
 export type DiscoveryStatus = 'idle' | 'running' | 'found' | 'not-found'
 
 /** Where one discovered instance came from. */
-export type BridgeInstanceSource = 'fixed' | 'beacon' | 'scan'
+export type BridgeInstanceSource = 'fixed' | 'beacon'
 
 /** One local dsh instance the background found. */
 export interface BridgeInstance {
@@ -61,7 +61,7 @@ export interface BridgeInstance {
   startedAt?: string
 }
 
-/** Sweep progress of one manual scan. */
+/** Progress of one manual detection pass. */
 export interface DiscoveryProgress {
   done: number
   total: number

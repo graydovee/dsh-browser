@@ -43,69 +43,49 @@ describe('discoveryUrl / portOfUrl', () => {
 
 describe('planDiscovery', () => {
   it('probes the remembered URL first and drops duplicate candidates', () => {
-    const plan = planDiscovery({
-      rememberedUrl: 'ws://127.0.0.1:3080/ext/bridge',
-      sweepPorts: [3080, 50000, 50001],
-    })
+    const plan = planDiscovery({ rememberedUrl: 'ws://127.0.0.1:3080/ext/bridge' })
 
     expect(plan.groups[0]).toEqual({ source: 'fixed', ports: [3080] })
     expect(plan.groups[1]?.ports).toEqual([3081, 3090, 14389])
     expect(plan.groups[2]?.source).toBe('beacon')
     expect(plan.groups[2]?.ports).toEqual([43189, 43190, 43191, 43192, 43193, 43194, 43195, 43196, 43197, 43198])
-    // The sweep never repeats a port a group already covered.
-    expect(plan.sweep).toEqual([50000, 50001])
+    expect(plan.groups.flatMap((group) => group.ports)).toHaveLength(14)
   })
 
   it('never re-probes the address that just failed', () => {
-    const plan = planDiscovery({
-      excludeUrl: 'ws://127.0.0.1:3080/ext/bridge',
-      sweepPorts: [3080, 50000],
-    })
+    const plan = planDiscovery({ excludeUrl: 'ws://127.0.0.1:3080/ext/bridge' })
 
     expect(plan.groups.flatMap((group) => group.ports)).not.toContain(3080)
-    expect(plan.sweep).toEqual([50000])
   })
 })
 
 describe('discoverInstances', () => {
-  it('stops at the first answering group and never sweeps', async () => {
+  it('stops at the first answering group', async () => {
     const { probe, seen } = probes({ 3081: payload(3081) })
-    const plan = planDiscovery({ sweepPorts: [50000, 50001] })
+    const plan = planDiscovery({})
 
     const found = await discoverInstances(plan, { probe, shouldContinue: () => true }, { stopAtFirstHit: true })
 
     expect(found.map((instance) => instance.wsUrl)).toEqual(['ws://127.0.0.1:3081/ext/bridge'])
     expect(seen).not.toContain(43189)
-    expect(seen).not.toContain(50000)
   })
 
-  it('sweeps the range only after every group came up empty', async () => {
-    const { probe, seen } = probes({ 50001: payload(50001) })
-    const plan = planDiscovery({ sweepPorts: [50000, 50001] })
-
-    const found = await discoverInstances(plan, { probe, shouldContinue: () => true }, { stopAtFirstHit: true })
-
-    expect(found.map((instance) => instance.port)).toEqual([50001])
-    expect(seen).toContain(50000)
-    expect(found[0]?.sources).toEqual(['scan'])
-  })
-
-  it('enumerates every instance, merging the sources that agreed on one URL', async () => {
-    // The beacon answers with the real port, which the sweep also finds.
+  it('enumerates every group and merges the sources that agreed on one URL', async () => {
+    // The fixed port and the beacon advertise the same bridge: one instance, two sources.
     const beacon: BridgeConfigPayload = { ...payload(51801), beacon: true, pid: 4242, startedAt: '2026-10-18T00:00:00.000Z' }
-    const { probe } = probes({ 43189: beacon, 50000: payload(51801), 50001: payload(9000) })
-    const plan = planDiscovery({ sweepPorts: [50000, 50001] })
+    const { probe } = probes({ 3080: payload(51801), 43189: beacon, 43190: payload(9000) })
+    const plan = planDiscovery({})
 
     const found = await discoverInstances(plan, { probe, shouldContinue: () => true }, { stopAtFirstHit: false })
 
     expect(found).toHaveLength(2)
-    expect(found[0]).toMatchObject({ wsUrl: beacon.wsUrl, port: 51801, sources: ['beacon', 'scan'], pid: 4242 })
-    expect(found[1]).toMatchObject({ wsUrl: 'ws://127.0.0.1:9000/ext/bridge', sources: ['scan'] })
+    expect(found[0]).toMatchObject({ wsUrl: beacon.wsUrl, port: 51801, sources: ['fixed', 'beacon'] })
+    expect(found[1]).toMatchObject({ wsUrl: 'ws://127.0.0.1:9000/ext/bridge', sources: ['beacon'] })
   })
 
-  it('reports sweep progress with the instances found so far', async () => {
-    const { probe } = probes({ 50000: payload(50000) })
-    const plan = planDiscovery({ sweepPorts: [50000, 50001, 50002] })
+  it('reports progress for every group with the instances found so far', async () => {
+    const { probe } = probes({ 43189: payload(51801) })
+    const plan = planDiscovery({})
     const progress: Array<{ done: number; total: number; ports: number[] }> = []
 
     await discoverInstances(plan, {
@@ -120,13 +100,13 @@ describe('discoverInstances', () => {
       },
     }, { stopAtFirstHit: false })
 
-    expect(progress[0]).toMatchObject({ done: 0, total: 3 })
-    expect(progress.at(-1)).toMatchObject({ done: 3, total: 3, ports: [50000] })
+    expect(progress[0]).toMatchObject({ done: 0, total: 14, ports: [] })
+    expect(progress.at(-1)).toMatchObject({ done: 14, total: 14, ports: [51801] })
   })
 
-  it('ends the sweep as soon as the caller withdraws', async () => {
+  it('ends the pass as soon as the caller withdraws', async () => {
     const { probe, seen } = probes({})
-    const plan = planDiscovery({ sweepPorts: Array.from({ length: 200 }, (_, index) => 50000 + index) })
+    const plan = planDiscovery({})
     let probesSeen = 0
 
     const found = await discoverInstances(plan, {
@@ -134,18 +114,16 @@ describe('discoverInstances', () => {
         probesSeen += 1
         return await probe(port)
       },
-      shouldContinue: () => probesSeen < 40,
+      shouldContinue: () => probesSeen < 4,
     }, { stopAtFirstHit: false })
 
     expect(found).toEqual([])
-    expect(seen.length).toBeLessThan(120)
+    expect(seen).not.toContain(43189)
   })
 
-  it('keeps instances smaller than the probe budget out of the list', async () => {
-    // A payload that is not a loopback bridge URL never reaches this layer:
-    // readBridgeConfig rejects it, so the runner only sees valid answers.
+  it('returns nothing when every group stays silent', async () => {
     const { probe } = probes({ 3080: undefined })
-    const plan = planDiscovery({ sweepPorts: [] })
+    const plan = planDiscovery({})
 
     const found = await discoverInstances(plan, { probe, shouldContinue: () => true }, { stopAtFirstHit: true })
 
