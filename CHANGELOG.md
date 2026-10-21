@@ -2,7 +2,7 @@
 
 **English** | [中文](CHANGELOG.zh-CN.md)
 
-## latest
+## v0.1.8
 * 2026-10-21 [Feature] Browser actions gain a general input layer: pointer gestures and coordinates, key chords and held keys, caret and per-character text, rich clipboard paste, file uploads, and single-iframe reads. Input runs in the background without activating tabs or moving the system pointer.
 * 2026-10-21 [Refactor] Auto-detect no longer sweeps the local ephemeral port range.
 
