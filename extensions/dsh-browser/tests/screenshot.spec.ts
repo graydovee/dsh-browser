@@ -5,7 +5,11 @@ import { dispatchToolCall, type ToolCall } from '../src/background/tools.ts'
 /** 1x1 transparent PNG. */
 const PNG_PIXEL = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg=='
 
-function stubChrome(tab: Partial<chrome.tabs.Tab>, capture?: (options: unknown) => string) {
+function stubChrome(
+  tab: Partial<chrome.tabs.Tab>,
+  capture?: (options: unknown) => string,
+  windowState?: { focused: boolean },
+) {
   const full: chrome.tabs.Tab = {
     id: 7,
     windowId: 3,
@@ -36,6 +40,7 @@ function stubChrome(tab: Partial<chrome.tabs.Tab>, capture?: (options: unknown) 
     webNavigation: {
       getAllFrames: vi.fn(async () => [{ frameId: 0, parentFrameId: -1, documentId: 'document-7', url: full.url ?? '' }]),
     },
+    ...(windowState === undefined ? {} : { windows: { get: vi.fn(async () => ({ id: full.windowId, ...windowState })) } }),
   })
   return { captureVisibleTab }
 }

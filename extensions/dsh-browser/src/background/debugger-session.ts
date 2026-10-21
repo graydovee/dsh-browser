@@ -65,6 +65,12 @@ const DEFAULT_COMMAND_TIMEOUT_MS = 10_000
 /** Bounded network buffers so a long page session cannot exhaust extension memory. */
 const NETWORK_BUFFERS = { maxTotalBufferSize: 20_000_000, maxResourceBufferSize: 5_000_000, maxPostDataSize: 1_000_000 }
 
+/** CDP domains this extension can enable on an attachment. */
+export type CdpDomain = 'DOM' | 'CSS' | 'Runtime' | 'Network'
+
+/** Domains the developer-tools group needs. */
+export const DEVTOOLS_DOMAINS: readonly CdpDomain[] = ['DOM', 'CSS', 'Runtime', 'Network']
+
 /** Observer hooks the devtools feature modules subscribe to. */
 export interface DevToolsSessionListeners {
   onCdpEvent?(method: string, params: unknown): void
@@ -98,7 +104,7 @@ export class DebuggerSession {
   private attached = false
   private paused = false
   private disposeEvents: (() => void) | undefined
-  private enabled: string[] = []
+  private enabled: CdpDomain[] = []
 
   constructor(
     readonly tabId: number,
@@ -124,10 +130,14 @@ export class DebuggerSession {
 
   /**
    * Attach and enable the domains this feature set needs. Idempotent.
+   * @param domains - CDP domains to enable; defaults to the developer-tools set.
    * @throws {DevToolsError} when another debugger owns the tab or the platform refuses.
    */
-  async attach(): Promise<void> {
-    if (this.attached) return
+  async attach(domains: readonly CdpDomain[] = DEVTOOLS_DOMAINS): Promise<void> {
+    if (this.attached) {
+      await this.enableDomains(domains)
+      return
+    }
     try {
       await this.api.attach({ tabId: this.tabId }, CDP_VERSION)
     } catch (error: unknown) {
@@ -138,18 +148,28 @@ export class DebuggerSession {
     this.bindEvents()
     this.enabled = []
     try {
-      await this.send('DOM.enable', {})
-      this.enabled.push('DOM')
-      await this.send('CSS.enable', {})
-      this.enabled.push('CSS')
-      await this.send('Runtime.enable', {})
-      this.enabled.push('Runtime')
-      await this.send('Network.enable', NETWORK_BUFFERS)
-      this.enabled.push('Network')
+      await this.enableDomains(domains)
     } catch (error: unknown) {
       // A partial attachment is worse than none: the caller retries cleanly.
       await this.detach()
       throw error
+    }
+  }
+
+  /**
+   * Enable CDP domains that are not enabled yet. Trusted input attaches with no
+   * domains (it only dispatches events), while the developer tools need their
+   * inspection and capture domains; whichever caller attaches first, the other
+   * can add its own set without re-attaching.
+   *
+   * @param domains - domains to enable.
+   */
+  async enableDomains(domains: readonly CdpDomain[]): Promise<void> {
+    for (const domain of domains) {
+      if (this.enabled.includes(domain)) continue
+      if (domain === 'Network') await this.send('Network.enable', NETWORK_BUFFERS)
+      else await this.send(`${domain}.enable`, {})
+      this.enabled.push(domain)
     }
   }
 

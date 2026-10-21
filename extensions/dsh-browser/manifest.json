@@ -14,7 +14,9 @@
     "webNavigation",
     "alarms",
     "notifications",
-    "debugger"
+    "debugger",
+    "clipboardWrite",
+    "offscreen"
   ],
   "host_permissions": [
     "<all_urls>"

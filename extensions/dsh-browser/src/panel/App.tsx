@@ -621,8 +621,10 @@ function devToolsStatusText(status: DevToolsStatus | null, copy: PanelCopy): str
   if (status === null) return copy.settings.devToolsOff
   if (!status.supported) return copy.settings.devToolsUnsupported
   if (status.error !== undefined && status.error !== '') return `${copy.settings.devToolsError} ${status.error}`
-  if (!status.enabled) return copy.settings.devToolsOff
+  // An attachment can also come from trusted input while the developer-tools
+  // allowance is off; report the live attachment before the setting's default.
   if (status.attached) return `${copy.settings.devToolsAttached}${status.tabId === undefined ? '' : ` (tab ${status.tabId})`}`
+  if (!status.enabled) return copy.settings.devToolsOff
   return copy.settings.devToolsIdle
 }
 

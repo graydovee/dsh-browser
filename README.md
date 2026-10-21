@@ -49,19 +49,23 @@ The paired Playwright / extension duration ratio was **1.24** (95% CI **1.16–1
 
 | Capability | Tool | Notes |
 |---|---|---|
-| Read page | `browser_snapshot` | Structured text snapshot: title, URL, main text, numbered controls, and masked form fields; `delta: true` returns only changes |
-| Click element | `browser_click` | Click links, buttons, checkboxes, and other controls by inventory number |
-| Fill forms | `browser_type` | React/Vue-compatible input; `replace` clears the field first |
-| Press keys | `browser_press` | Keyboard events such as Enter, Tab, Escape, and arrow keys |
-| Scroll | `browser_scroll` | Viewport scrolling: up, down, top, and bottom |
+| Read page | `browser_snapshot` | Structured text snapshot: title, URL, main text, numbered controls, and masked form fields; `delta: true` returns only changes, `frame` reads one iframe, and `query` locates any element by text/selector/role with its selector and rect |
+| Pointer | `browser_click` | Click, double-click, hover, press, release, or drag by index or selector; canvas targets without an identity accept frame-local `point` coordinates |
+| Text | `browser_type` | React/Vue-compatible input; `replace` clears the field first, and `mode` selects caret insertion or per-character key events |
+| Press keys | `browser_press` | Single keys or chords (`modifiers`); `action: down/up` holds a key across calls and `repeat` repeats it |
+| Scroll | `browser_scroll` | Viewport scrolling; with `point` it sends a real wheel gesture at those coordinates (canvas zoom/pan) |
+| Clipboard | `browser_clipboard` | `write` puts text/HTML on the system clipboard; `paste` delivers it as a paste event or a real platform shortcut |
+| Files | `browser_upload` | Attach local files to an `input[type=file]` (Chrome) |
 | Navigate | `browser_navigate` / `browser_open_tab` / `browser_back` / `browser_forward` / `browser_reload` | Navigation inside the controlled tab, or open a URL in a new tab and follow it (`active:false` keeps the current tab in front) |
 | List tabs | `browser_list_tabs` | List accessible tabs with stable IDs, titles, URLs, window/index metadata, and active/controlled state |
-| Follow tab | `browser_follow_tab` | Bind later browser tools to a tab returned by `browser_list_tabs` without activating it |
+| Follow tab | `browser_follow_tab` | Bind later browser tools to a tab returned by `browser_list_tabs`; it stays in the background unless `activate: true` |
 | Close tab | `browser_close_tab` | Close a tab returned by `browser_list_tabs` |
 | Read region | `browser_get_text` | Lazy-loaded or partial page text |
 | Wait for stability | `browser_wait` | Page-load and render-settle detection |
 | Send images | `session.prompt` / `session.attachment` | Host-capability-gated image drafts, image-only prompts, and durable history previews |
 | Quote a selection | side panel composer | Text you highlight in the page appears in the composer and is sent with your next message as fenced, attributed page content |
+
+The input layer is a set of general primitives, not per-app handling: keyboard, pointer, text, clipboard, and files all address a target by element identity or coordinates, so any rich editor, canvas, code editor, or drag surface uses the same parameters. Input runs in the background by default — no tab activation, no window focus, no system pointer movement. When real events matter (`isTrusted`, browser default actions) the Chrome build delivers them through the debugger; Firefox degrades to synthetic events and marks the result `(synthetic)`. Wheel gestures and screenshots are the exceptions: a wheel needs the page to be the active tab in a focused window (Chrome freezes background pages, so the tool fails fast with a `follow_tab {activate:true}` hint), and a screenshot needs the same focus or it may return an older frame.
 
 ## Repository layout
 
