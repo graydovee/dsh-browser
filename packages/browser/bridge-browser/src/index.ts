@@ -405,7 +405,9 @@ function mountBridge(
       text: () => 'A browser bridge may be connected. To read or operate the user\'s active browser page, call browser_snapshot '
         + '(text-only; numbered items are the click/type targets), unless the current turn already includes a plugin-provided '
         + 'followed-page browser_snapshot. Reuse that injected snapshot and its indices directly. Never assume page content you have not snapshotted. '
-        + 'When visual appearance matters, call browser_screenshot to capture the controlled tab viewport as an image.'
+        + 'When visual appearance matters, call browser_screenshot to capture the controlled tab viewport as an image. '
+        + 'Use browser_snapshot { query } to locate controls that have no semantic role; browser_click accepts pointer gestures and coordinates, '
+        + 'browser_press sends chords and held keys, and browser_clipboard pastes rich content into editors.'
         + (devToolsDisposers === undefined
           ? ''
           : ' The browser_devtools_* and browser_console_* tools are available for element/CSS inspection, page-context JavaScript, and network '

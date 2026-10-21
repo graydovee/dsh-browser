@@ -96,10 +96,15 @@ npx @deepseek-ai/dsh@0.2.1-rc.2 web
 
 | 工具 | 用途 |
 |---|---|
-| `browser_snapshot` | 结构化文本快照（标题/URL/正文/清单/表单）；`delta: true` 只返回变化。 |
-| `browser_click` / `browser_type` / `browser_press` | 按稳定编号操作清单元素。 |
-| `browser_scroll` / `browser_navigate` / `browser_open_tab` / `browser_open_window` / `browser_back` / `browser_forward` / `browser_reload` | 页面移动。 |
+| `browser_snapshot` | 结构化文本快照（标题/URL/正文/清单/表单）；`delta: true` 只返回变化，`frame` 单读一个 iframe，`query` 按文本/选择器/角色定位元素并给出选择器与坐标。 |
+| `browser_click` | 指针操作：按编号或选择器点击/双击/悬停/按下/抬起/拖拽，或按 frame 内坐标（`point`）操作；`trusted: true` 要求真实鼠标事件。 |
+| `browser_type` | 按编号/选择器或向当前焦点输入文本；`replace` 先选中内容，`mode` 选择光标插入或逐字符按键。 |
+| `browser_press` | 单键或组合键（`modifiers`），`action: down/up` 跨调用按住，`repeat` 重复。 |
+| `browser_clipboard` / `browser_upload` | 写入/粘贴文本与富文本；把本机文件附加到 file input（系统粘贴与上传在 Chrome 可用）。 |
+| `browser_scroll` / `browser_navigate` / `browser_open_tab` / `browser_open_window` / `browser_back` / `browser_forward` / `browser_reload` | 页面移动；`browser_scroll` 带 `point` 时发送真实滚轮手势。 |
 | `browser_get_text` / `browser_wait` | 读区域文本 / 稳定检测。 |
+
+输入投递：元素寻址与纯文本留在内容脚本，不需要调试器。坐标点击、指针手势、滚轮手势、真实组合键、光标插入、系统粘贴、文件上传走 Chrome 的调试器输入通道；平台没有该通道时，要么降级为合成事件（结果标注 `(synthetic)`），要么以 `input-unavailable` 失败。输入不会激活标签页、聚焦窗口或移动系统鼠标；`browser_follow_tab { activate: true }` 是唯一显式切前台的方式。滚轮手势要求页面是活动标签页且窗口聚焦（后台页可能被冻结，守卫会立即返回带 `follow_tab {activate:true}` 提示的错误）；截图同样要求活动标签页与聚焦窗口。
 
 ### 开发者工具（高权限）
 

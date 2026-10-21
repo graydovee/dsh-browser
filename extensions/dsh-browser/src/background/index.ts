@@ -59,10 +59,13 @@ import {
   dispatchToolCall,
   isNavigationCandidateTool,
   isTabManagementTool,
+  resetInputState,
   resetTabSnapshot,
+  type InputRuntime,
   type ToolAnswer,
   type ToolCall,
 } from './tools.ts'
+import { createDebuggerBroker } from './debugger-broker.ts'
 import {
   isApprovalDecision,
   type ApprovalAuthorization,
@@ -288,11 +291,33 @@ const selections = new SelectionTracker()
 const devToolsCapability = devToolsSupported()
 
 /**
+ * One debugger attachment per tab, shared by the developer tools and trusted
+ * input. Input holds it only around one call and lets it expire when idle.
+ */
+const debuggerBroker = createDebuggerBroker({
+  onStateChange: () => { broadcastDevToolsState() },
+})
+
+/** Trusted input channel handed to the tool dispatcher. */
+const inputRuntime: InputRuntime = {
+  supported: devToolsCapability,
+  async run(tabId, operation) {
+    const lease = await debuggerBroker.acquire(tabId, 'input')
+    try {
+      return await operation(lease.session)
+    } finally {
+      await lease.release()
+    }
+  },
+}
+
+/**
  * High-privilege developer tools. The controller refuses every call unless the
  * user's setting is on, and the background still routes each call through the
  * approval gate first.
  */
 const devTools = createDevToolsController({
+  broker: debuggerBroker,
   // Consent is enforced by the approval gate in `dispatchDevToolsTool`: with the
   // setting off every call raises its own dialog, and unrelated switches never
   // cover this group. The controller only owns capability and target policy.
@@ -1406,6 +1431,7 @@ function routeToolCall(call: ToolCall): void {
         unrestrictedAccess,
         ...(controlledTabId === undefined ? {} : { controlledTabId }),
         followTab: (tab) => followModelSelectedTab(tab, call.sessionId),
+        input: inputRuntime,
         commitAction,
         rollbackActionCommit,
       },
@@ -1455,7 +1481,7 @@ function routeToolCall(call: ToolCall): void {
           controller.signal,
           target,
           () => target.id !== undefined && tabAffinity.allowsTarget(target.id, call.sessionId),
-          { unrestrictedAccess, commitAction, rollbackActionCommit },
+          { unrestrictedAccess, input: inputRuntime, commitAction, rollbackActionCommit },
         ))
   ).then(
     async (answer) => {
@@ -2272,11 +2298,21 @@ chrome.tabs.onRemoved.addListener((tabId) => {
 // quote taken from its parent page, and vice versa.
 chrome.webNavigation.onCommitted.addListener(({ tabId, frameId }) => {
   broadcastSelections(selections.clearTab(tabId, frameId))
+  // A new top-level document drops any modifier or button held by a trusted
+  // input sequence; keeping it would leak state into the next page.
+  if (frameId === 0) {
+    resetInputState(tabId)
+    // Only the input hold is stale after a navigation. The developer-tools
+    // capture must survive navigation (it re-syncs frames and keeps buffering),
+    // so never detach the whole tab here.
+    void debuggerBroker.detachOwner(tabId, 'input').catch(() => undefined)
+  }
 })
 
 // A closed tab cannot stay debugged; release the attachment immediately so the
 // "being debugged" banner never outlives its page.
 chrome.tabs.onRemoved.addListener((tabId) => {
+  resetInputState(tabId)
   devTools.releaseTab(tabId)
 })
 

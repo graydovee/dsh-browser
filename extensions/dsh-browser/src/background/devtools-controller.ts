@@ -13,9 +13,11 @@
 import {
   DebuggerSession,
   DevToolsError,
+  DEVTOOLS_DOMAINS,
   debuggerApi,
   devToolsSupported,
 } from './debugger-session.ts'
+import { createDebuggerBroker, type DebuggerBroker, type DebuggerLease } from './debugger-broker.ts'
 import {
   NetworkCapture,
   type NetworkEntry,
@@ -70,6 +72,8 @@ export interface DevToolsControllerOptions {
   resolveTarget: (sessionId?: string) => Promise<DevToolsTarget | undefined>
   /** Debugger surface override for tests; defaults to the real `chrome.debugger`. */
   api?: import('./debugger-session.ts').DebuggerApi
+  /** Shared attachment owner; created from `api` when omitted. */
+  broker?: DebuggerBroker
   /** Output budget override. */
   maxChars?: number
   /** Command timeout override (tests). */
@@ -118,6 +122,7 @@ export interface DevToolsController {
 interface TabContext {
   tabId: number
   session: DebuggerSession
+  lease: DebuggerLease
   capture: NetworkCapture
   frames: FrameRegistry
   detachedReason?: string
@@ -160,29 +165,25 @@ export function createDevToolsController(options: DevToolsControllerOptions): De
   const api = options.api ?? debuggerApi()
   const maxChars = options.maxChars ?? DEFAULT_DEVTOOLS_OUTPUT_CHARS
   const contexts = new Map<number, TabContext>()
+  const broker = options.broker ?? createDebuggerBroker({
+    ...(api === undefined ? {} : { api }),
+    ...(options.commandTimeoutMs === undefined ? {} : { commandTimeoutMs: options.commandTimeoutMs }),
+  })
   let revoked = false
 
   const supported = (): boolean => api !== undefined && devToolsSupported()
 
-  /** Attachment state that outlives a detached context, so status stays truthful. */
-  const attachment: { tabId?: number; attached: boolean; reason?: string } = { attached: false }
+  /** The last reported failure; attachment state itself comes from the broker. */
+  let failureReason: string | undefined
 
-  const state = (): DevToolsState => ({
-    supported: supported(),
-    attached: attachment.attached,
-    ...(attachment.tabId === undefined ? {} : { tabId: attachment.tabId }),
-    ...(attachment.reason === undefined ? {} : { error: attachment.reason }),
-  })
-
-  const markAttached = (tabId: number): void => {
-    attachment.tabId = tabId
-    attachment.attached = true
-    attachment.reason = undefined
-  }
-
-  const markDetached = (reason?: string): void => {
-    attachment.attached = false
-    if (reason !== undefined) attachment.reason = reason
+  const state = (): DevToolsState => {
+    const shared = broker.state()
+    return {
+      supported: supported(),
+      attached: shared.attached,
+      ...(shared.tabId === undefined ? {} : { tabId: shared.tabId }),
+      ...(failureReason === undefined ? {} : { error: failureReason }),
+    }
   }
 
   /**
@@ -191,21 +192,32 @@ export function createDevToolsController(options: DevToolsControllerOptions): De
    * refusal reports its own cause so the user knows what to change.
    */
   const clearFailure = (reason?: string): void => {
-    attachment.reason = reason
+    failureReason = reason
   }
 
   const notify = (): void => { options.onStateChange?.(state()) }
+
+  /** Listener set this controller registers with the shared broker. */
+  const listenersFor = (tabId: number): import('./debugger-session.ts').DevToolsSessionListeners => ({
+    onCdpEvent: (method, params) => { handleCdpEvent(contexts.get(tabId), method, params) },
+    onDetached: (reason) => {
+      const context = contexts.get(tabId)
+      if (context !== undefined) context.detachedReason = reason
+      notify()
+    },
+  })
 
   /**
    * Capture state for a status question. The background can ask this after a
    * `stop` dropped the tab context, so it falls back to the shared attachment.
    */
   const statusSnapshot = (tabId?: number): { attached: boolean; tabId?: number; entries: number; generation: number } => {
-    const resolved = tabId ?? attachment.tabId
+    const shared = broker.state()
+    const resolved = tabId ?? shared.tabId
     const context = resolved === undefined ? undefined : contexts.get(resolved)
     const capture = context?.capture.state()
     return {
-      attached: context === undefined ? false : context.capture.state().attached && attachment.attached,
+      attached: context === undefined ? false : context.capture.state().attached && shared.attached,
       ...(resolved === undefined ? {} : { tabId: resolved }),
       entries: capture?.entries ?? 0,
       generation: capture?.generation ?? 0,
@@ -222,31 +234,37 @@ export function createDevToolsController(options: DevToolsControllerOptions): De
       }
       return existing
     }
-    const session = new DebuggerSession(
-      tabId,
-      api!,
-      {
-        onCdpEvent: (method, params) => { handleCdpEvent(contexts.get(tabId), method, params) },
-        onDetached: (reason) => {
-          const context = contexts.get(tabId)
-          if (context !== undefined) context.detachedReason = reason
-          markDetached(reason)
-          notify()
-        },
-      },
-      options.commandTimeoutMs,
-    )
+    let lease: DebuggerLease
+    try {
+      lease = await broker.acquire(tabId, 'devtools', {
+        domains: DEVTOOLS_DOMAINS,
+        listeners: listenersFor(tabId),
+      })
+    } catch (error: unknown) {
+      failureReason = error instanceof Error ? error.message : String(error)
+      notify()
+      throw error
+    }
     const context: TabContext = {
       tabId,
-      session,
+      session: lease.session,
+      lease,
       capture: new NetworkCapture(),
       frames: new FrameRegistry(),
       cdpEvents: {},
-      domains: [],
+      domains: [...lease.session.domains],
       networkEvents: {},
     }
     contexts.set(tabId, context)
-    await attach(context, true)
+    try {
+      await afterAttach(context, true)
+    } catch (error: unknown) {
+      contexts.delete(tabId)
+      await lease.release({ immediate: true })
+      failureReason = error instanceof Error ? error.message : String(error)
+      notify()
+      throw error
+    }
     return context
   }
 
@@ -254,13 +272,20 @@ export function createDevToolsController(options: DevToolsControllerOptions): De
     // A new attempt supersedes whatever the previous one reported.
     clearFailure()
     try {
-      await tryAttach(context.session)
+      const session = await broker.reattach(context.tabId, 'devtools', DEVTOOLS_DOMAINS)
+      context.session = session
     } catch (error: unknown) {
       contexts.delete(context.tabId)
-      markDetached(error instanceof DevToolsError ? error.message : String(error))
+      await context.lease.release({ immediate: true })
+      failureReason = error instanceof Error ? error.message : String(error)
       notify()
       throw error
     }
+    await afterAttach(context, resetCapture)
+  }
+
+  /** Post-attach bookkeeping shared by a fresh context and a re-attach. */
+  const afterAttach = async (context: TabContext, resetCapture: boolean): Promise<void> => {
     context.session.resume()
     context.detachedReason = undefined
     context.domains = [...context.session.domains]
@@ -268,31 +293,10 @@ export function createDevToolsController(options: DevToolsControllerOptions): De
       context.capture.clear()
       context.capture.start(context.tabId)
     }
-    markAttached(context.tabId)
+    clearFailure()
     // Frame numbering must be known before any index-based address resolves.
     await syncFrames(context.session, context.frames).catch(() => undefined)
     notify()
-  }
-
-  /** Attach, recovering from a stale attachment left by a worker restart. */
-  const tryAttach = async (session: DebuggerSession): Promise<void> => {
-    try {
-      await session.attach()
-    } catch (error: unknown) {
-      if (error instanceof DevToolsError && error.code === 'devtools-conflict') {
-        // After an MV3 worker restart the extension believes it is detached
-        // while Chrome still holds the attachment. Drop it and retry once; a
-        // genuine DevTools user keeps the tab and sees the actionable error.
-        try {
-          await api!.detach({ tabId: session.tabId })
-          await session.attach()
-          return
-        } catch {
-          throw error
-        }
-      }
-      throw error
-    }
   }
 
   const handleCdpEvent = (context: TabContext | undefined, method: string, params: unknown): void => {
@@ -371,23 +375,20 @@ export function createDevToolsController(options: DevToolsControllerOptions): De
       const context = contexts.get(tabId)
       if (context === undefined) return
       contexts.delete(tabId)
-      markDetached()
-      void context.session.detach()
+      void broker.detachTab(tabId)
       notify()
     },
     revoke: async () => {
       revoked = true
-      const pending = [...contexts.values()]
       contexts.clear()
-      markDetached()
-      await Promise.all(pending.map(async (context) => { await context.session.detach() }))
+      failureReason = undefined
+      await broker.detachAll()
       notify()
     },
     detachAll: async () => {
-      const pending = [...contexts.values()]
       contexts.clear()
-      markDetached()
-      await Promise.all(pending.map(async (context) => { await context.session.detach() }))
+      failureReason = undefined
+      await broker.detachAll()
       notify()
     },
     resume: () => {
@@ -564,8 +565,9 @@ export function createDevToolsController(options: DevToolsControllerOptions): De
     if (action === 'stop') {
       context.capture.stop()
       contexts.delete(context.tabId)
-      markDetached()
-      await context.session.detach()
+      // Release only this feature's hold: the shared attachment stays alive for
+      // a trusted-input owner and is dropped when nobody needs it.
+      await context.lease.release({ immediate: true })
       notify()
       return renderCaptureState({ ...context.capture.state(), attached: false, tabId: target.tabId }, 'stop')
     }

@@ -66,6 +66,8 @@ export type ToolErrorCode =
   | 'bridge-closed'
   | 'bad-args'
   | 'internal'
+  /** The platform has no trustworthy input channel (no `chrome.debugger`). */
+  | 'input-unavailable'
 
 /** One tool-call failure: stable machine code plus human text for the model. */
 export interface ToolError {

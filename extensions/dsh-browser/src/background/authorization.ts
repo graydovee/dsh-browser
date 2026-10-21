@@ -10,6 +10,8 @@ const STATE_CHANGING_ACTIONS = new Set([
   'browser_click',
   'browser_type',
   'browser_press',
+  'browser_clipboard',
+  'browser_upload',
   'browser_navigate',
   'browser_open_tab',
   'browser_open_window',
@@ -147,6 +149,19 @@ export function approvalPromptForCall(
     }
   }
 
+  // A plain scroll only moves the viewport and stays prompt-free (existing
+  // behavior); a wheel at a point is a raw gesture into the page and is not.
+  if (call.name === 'browser_scroll' && call.args.point !== undefined) {
+    const frameId = requestedFrame(call.args)
+    const target = frames.find((frame) => frame.frameId === frameId) ?? frames.find((frame) => frame.frameId === 0)
+    return {
+      kind: 'action',
+      action: call.name,
+      summary: summarizeAction(call, locale),
+      origins: uniqueOrigins(target === undefined ? [] : [target], frames),
+      canTrust: false,
+    }
+  }
   if (!STATE_CHANGING_ACTIONS.has(call.name)) return undefined
   if (call.name === 'browser_open_tab' || call.name === 'browser_open_window') {
     const destination = originFromUrl(typeof call.args.url === 'string' ? call.args.url : '')
@@ -163,6 +178,9 @@ export function approvalPromptForCall(
   const target = frames.find((frame) => frame.frameId === frameId) ?? frames.find((frame) => frame.frameId === 0)
   const origins = uniqueOrigins(target === undefined ? [] : [target], frames)
   let canTrust = origins.length === 1 && call.name !== 'browser_back' && call.name !== 'browser_forward'
+  // Clipboard writes affect the user's system clipboard and uploads hand local
+  // files to a page; neither is an origin-scoped permission.
+  if (call.name === 'browser_clipboard' || call.name === 'browser_upload') canTrust = false
   if (call.name === 'browser_navigate') {
     const destination = originFromUrl(typeof call.args.url === 'string' ? call.args.url : '')
     if (destination !== undefined && !origins.includes(destination)) origins.push(destination)
@@ -219,7 +237,19 @@ function summarizeAction(call: ToolCall, locale: UiLocale): string {
     : ''
   const index = typeof call.args.index === 'number' ? call.args.index : '?'
   switch (call.name) {
-    case 'browser_click': return localized(locale, `Click element [${index}]${frame}`, `点击元素 [${index}]${frame}`)
+    case 'browser_click': {
+      if (typeof call.args.point !== 'undefined') {
+        return localized(locale, 'Click at a page coordinate', '在页面坐标处点击')
+      }
+      const target = typeof call.args.selector === 'string'
+        ? `selected element (${safeInline(call.args.selector)})`
+        : `element [${index}]`
+      const targetZh = typeof call.args.selector === 'string'
+        ? `选择器元素（${safeInline(call.args.selector)}）`
+        : `元素 [${index}]`
+      const gesture = typeof call.args.action === 'string' && call.args.action !== 'click' ? ` ${call.args.action}` : ''
+      return localized(locale, `${gesture.trim() === '' ? 'Click' : gesture.trim()} ${target}${frame}`, `${gesture === '' ? '点击' : gesture.trim()} ${targetZh}${frame}`)
+    }
     case 'browser_type': {
       const length = typeof call.args.text === 'string' ? call.args.text.length : 0
       return localized(
@@ -266,6 +296,25 @@ function summarizeAction(call: ToolCall, locale: UiLocale): string {
           `在新窗口打开 ${destination}`,
         )
     }
+    case 'browser_clipboard': {
+      const writing = call.args.action === 'write'
+      const html = typeof call.args.html === 'string' && call.args.html !== ''
+      return writing
+        ? localized(
+          locale,
+          `Write ${html ? 'text and rich HTML' : 'text'} to the system clipboard`,
+          `向系统剪贴板写入${html ? '文本与富文本' : '文本'}`,
+        )
+        : localized(locale, 'Paste the clipboard into the page', '把剪贴板内容粘贴到页面')
+    }
+    case 'browser_upload': {
+      const count = Array.isArray(call.args.paths) ? call.args.paths.length : 0
+      return localized(locale, `Attach ${count} local file(s) to a page field`, `向页面字段附加 ${count} 个本地文件`)
+    }
+    case 'browser_scroll':
+      return call.args.point !== undefined
+        ? localized(locale, 'Send a wheel gesture into the page', '向页面发送滚轮手势')
+        : localized(locale, 'Scroll the page', '滚动页面')
     case 'browser_back': return localized(locale, 'Go back in browser history (destination domain unknown)', '返回浏览历史上一页（目标域名未知）')
     case 'browser_forward': return localized(locale, 'Go forward in browser history (destination domain unknown)', '前进到浏览历史下一页（目标域名未知）')
     case 'browser_reload': return localized(locale, 'Reload the current page', '重新加载当前页面')

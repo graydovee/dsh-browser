@@ -9,7 +9,7 @@
  */
 
 import { DEFAULT_SNAPSHOT_MAX_CHARS } from '@yuxianglin/dsh-bridge-browser/src/protocol.ts'
-import type { ToolError } from '@yuxianglin/dsh-bridge-browser/src/protocol.ts'
+import type { ToolError, ToolErrorCode } from '@yuxianglin/dsh-bridge-browser/src/protocol.ts'
 import {
   allocateFrameBudgets,
   frameDocumentKey,
@@ -22,6 +22,25 @@ import { approvalPromptForCall, originFromUrl } from './authorization.ts'
 import { waitForNextDocumentReady } from './navigation.ts'
 import type { ApprovalAuthorization, ApprovalPrompt } from '../security/approval.ts'
 import { getUiLocale } from '../i18n.ts'
+import { DevToolsError, type CdpClient } from './debugger-session.ts'
+import { InputStateStore } from './input-state.ts'
+import {
+  InputError,
+  dispatchKey,
+  dispatchPointer,
+  dispatchWheel,
+  insertTextAtCaret,
+  sendPasteShortcut,
+  typeAsKeystrokes,
+  setInputFiles,
+  withFocusEmulation,
+  type PointerAction,
+} from './input-actions.ts'
+import { isModifierName, type ModifierName } from './keys.ts'
+import { toViewportPoint, type Point } from '../shared/frame-geometry.ts'
+import type { InputSetupRequest, InputSetupResult, MeasuredTarget } from '../shared/input-setup.ts'
+import { writeClipboard } from './clipboard-write.ts'
+import type { ClipboardWriteOutcome } from '../shared/clipboard.ts'
 
 /** A tool call from the bridge. */
 export interface ToolCall {
@@ -53,6 +72,7 @@ const ACTION_DELTA_TOOLS = new Set([
   'browser_type',
   'browser_press',
   'browser_scroll',
+  'browser_clipboard',
   'browser_wait',
 ])
 const ACTION_DELTA_GUIDANCE = 'The page settled and its current changes are included below. Continue from this state; take another snapshot only when broader page context is needed.'
@@ -77,6 +97,8 @@ const STATE_CHANGING_PAGE_TOOLS = new Set([
   'browser_type',
   'browser_press',
   'browser_scroll',
+  'browser_clipboard',
+  'browser_upload',
   'browser_navigate',
   'browser_back',
   'browser_forward',
@@ -97,6 +119,11 @@ export function resetTabSnapshot(tabId: number): void {
   snapshotDocumentsByTab.delete(tabId)
 }
 
+/** Forget held modifiers, buttons, and the pointer for a tab that moved on. */
+export function resetInputState(tabId: number): void {
+  inputStates.reset(tabId)
+}
+
 /** Whether a successful tool may have changed the controlled tab's page URL. */
 export function isNavigationCandidateTool(name: string): boolean {
   return NAVIGATION_CANDIDATE_TOOLS.has(name)
@@ -107,6 +134,14 @@ export function isTabManagementTool(name: string): boolean {
   return TAB_MANAGEMENT_TOOL_NAMES.has(name)
 }
 
+/** Trusted input channel owned by the background entry point (debugger broker). */
+export interface InputRuntime {
+  /** Whether the platform can dispatch real browser input. */
+  supported: boolean
+  /** Run one operation against the tab's shared debugger attachment. */
+  run<T>(tabId: number, operation: (client: CdpClient) => Promise<T>): Promise<T>
+}
+
 /** Tab-affinity services owned by the background entry point. */
 export interface TabManagementContext {
   /** Skip all browser approval prompts after the user enables unrestricted access. */
@@ -115,6 +150,8 @@ export interface TabManagementContext {
   controlledTabId?: number
   /** Rebind subsequent tools to one existing tab without activating it. */
   followTab?: (tab: chrome.tabs.Tab) => void | Promise<void>
+  /** Trusted input, when the platform and the user's browser allow it. */
+  input?: InputRuntime
   /** Mark the point after which a state-changing operation cannot be withdrawn. */
   commitAction?: () => void
   /** Restore withdrawability when a content-script action was not delivered. */
@@ -170,6 +207,18 @@ function contentScriptReceiverMissing(error: unknown): boolean {
 
 function unavailable(message: string): ToolAnswer {
   return { ok: false, error: { code: 'content-unavailable', message } }
+}
+
+/** Map a debugger failure to the model-facing vocabulary instead of masking it. */
+function devToolsFailure(error: unknown): ToolAnswer | undefined {
+  if (!(error instanceof DevToolsError)) return undefined
+  return {
+    ok: false,
+    error: {
+      code: error.code === 'devtools-conflict' ? 'input-unavailable' : 'action-failed',
+      message: error.message,
+    },
+  }
 }
 
 function tabMetadataSnapshot(
@@ -338,13 +387,264 @@ function wrapActionDelta(status: string, pageContent: string, frame: TabFrame, m
   return `${prefix}${separator}${wrapUntrustedContent(framedContent, boundaryBudget)}`
 }
 
+/** Per-tab trusted-input state (held modifiers, buttons, pointer). */
+const inputStates = new InputStateStore()
+
+/** Failure of an internal content-script input setup request. */
+class InputSetupError extends Error {
+  constructor(
+    readonly code: ToolErrorCode,
+    message: string,
+  ) {
+    super(message)
+    this.name = 'InputSetupError'
+  }
+}
+
+/** Content-script response envelope for one setup request. */
+interface InputSetupEnvelope {
+  ok?: boolean
+  result?: InputSetupResult
+  error?: { code?: string; message?: string }
+}
+
+/** Ask one frame to measure, focus, mark, or report its frame chain. */
+async function sendInputSetup(tabId: number, frame: TabFrame, request: InputSetupRequest): Promise<InputSetupResult> {
+  const response = await chrome.tabs.sendMessage(
+    tabId,
+    { type: 'DSH_INPUT_SETUP', request },
+    frame.documentId === undefined ? { frameId: frame.frameId } : { documentId: frame.documentId },
+  ) as InputSetupEnvelope | undefined
+  if (typeof response !== 'object' || response === null || response.ok !== true || response.result === undefined) {
+    const code = response?.error?.code
+    const stable: ToolErrorCode = code === 'bad-args' || code === 'input-unavailable' || code === 'action-failed'
+      ? code
+      : 'action-failed'
+    throw new InputSetupError(stable, response?.error?.message ?? 'The page did not answer the input setup request.')
+  }
+  return response.result
+}
+
+/** A finite viewport point. */
+function finitePoint(value: unknown): Point | undefined {
+  if (typeof value !== 'object' || value === null) return undefined
+  const record = value as { x?: unknown; y?: unknown }
+  if (typeof record.x !== 'number' || typeof record.y !== 'number') return undefined
+  if (!Number.isFinite(record.x) || !Number.isFinite(record.y)) return undefined
+  return { x: record.x, y: record.y }
+}
+
+/** Validate the model-supplied modifier list. */
+function requestedModifiers(args: Record<string, unknown>): ModifierName[] {
+  if (args.modifiers === undefined) return []
+  if (!Array.isArray(args.modifiers)) {
+    throw new InputError('bad-args', 'modifiers must be a list of Alt, Control, Meta, or Shift.')
+  }
+  const modifiers: ModifierName[] = []
+  for (const value of args.modifiers) {
+    if (typeof value !== 'string' || !isModifierName(value)) {
+      throw new InputError('bad-args', 'modifiers must be a list of Alt, Control, Meta, or Shift.')
+    }
+    modifiers.push(value)
+  }
+  return modifiers
+}
+
+/** Resolve a model target into a frame-local point (explicit point or element center). */
+async function resolveFramePoint(tabId: number, frame: TabFrame, args: Record<string, unknown>): Promise<{ point: Point; label: string }> {
+  const explicit = finitePoint(args.point)
+  if (explicit !== undefined) return { point: explicit, label: `point ${Math.round(explicit.x)},${Math.round(explicit.y)}` }
+  const setup = await sendInputSetup(tabId, frame, {
+    op: 'measure',
+    ...(args.index === undefined ? {} : { index: args.index as number }),
+    ...(typeof args.selector === 'string' ? { selector: args.selector } : {}),
+  })
+  if (setup.op !== 'measure') {
+    throw new InputSetupError('action-failed', 'The page returned an unexpected measurement result.')
+  }
+  const measure: MeasuredTarget = setup.measure
+  const point = { x: measure.rect.x + measure.rect.width / 2, y: measure.rect.y + measure.rect.height / 2 }
+  const identity = measure.selector === '' ? 'element' : measure.selector
+  return { point, label: `${identity} center` }
+}
+
+/** The frame-owner chain used to translate frame coordinates into the tab viewport. */
+async function frameEdges(tabId: number, frame: TabFrame): Promise<import('../shared/frame-geometry.ts').FrameEdge[]> {
+  const setup = await sendInputSetup(tabId, frame, { op: 'offset' })
+  if (setup.op !== 'offset') {
+    throw new InputSetupError('action-failed', 'The page returned an unexpected frame geometry result.')
+  }
+  return setup.edges
+}
+
+/** Translate one explicit point from frame coordinates into the tab viewport. */
+async function viewportPointFor(tabId: number, frame: TabFrame, point: Point): Promise<Point> {
+  return toViewportPoint(await frameEdges(tabId, frame), point)
+}
+
+/** Rough plain text of an HTML fragment, used as the clipboard text flavor. */
+function plainTextFromHtml(html: string): string {
+  return html
+    .replace(/<(script|style)[^>]*>[\s\S]*?<\/\1>/gi, ' ')
+    .replace(/<[^>]*>/g, ' ')
+    .replace(/&nbsp;/gi, ' ')
+    .replace(/&amp;/gi, '&')
+    .replace(/&lt;/gi, '<')
+    .replace(/&gt;/gi, '>')
+    .replace(/&quot;/gi, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
+/** Report what the clipboard actually holds, including derived plain text. */
+function describeClipboardWrite(outcome: ClipboardWriteOutcome): string {
+  if (!outcome.rich) return `Wrote ${outcome.plainText.length} character(s) to the system clipboard.`
+  if (outcome.plainDerived) {
+    return `Wrote rich HTML to the system clipboard; the plain-text flavor is derived from the HTML (${outcome.plainText.length} characters).`
+  }
+  return `Wrote rich HTML and ${outcome.plainText.length} plain-text character(s) to the system clipboard.`
+}
+
+/** Describe the target in a status line without echoing page text. */
+function describeTarget(args: Record<string, unknown>): string {
+  if (args.index !== undefined) return `element [${String(args.index)}]`
+  if (typeof args.selector === 'string') return `element (${args.selector})`
+  return 'the focused element'
+}
+
+/**
+ * After trusted input, wait for the frame to settle and attach the page delta.
+ * The `browser_wait` action already owns both behaviors for content-script
+ * actions; reusing it keeps the result shape identical for real input.
+ */
+async function settleAfterInput(
+  tabId: number,
+  frame: TabFrame,
+  status: string,
+  budget: ContentBudget,
+): Promise<ToolAnswer> {
+  try {
+    const response = await chrome.tabs.sendMessage(
+      tabId,
+      { type: 'DSH_ACTION', action: 'browser_wait', args: {}, budget, includePageDelta: true },
+      frame.documentId === undefined ? { frameId: frame.frameId } : { documentId: frame.documentId },
+    )
+    if (isToolAnswer(response)) {
+      const pageContent = answerPageContent(response)
+      if (pageContent !== undefined) {
+        return { ok: true, result: { text: wrapActionDelta(`${status} (trusted)`, pageContent, frame, budget.maxChars) } }
+      }
+    }
+  } catch {
+    // The page may be navigating; the trusted action itself already succeeded.
+  }
+  return { ok: true, result: { text: `${status} (trusted)` } }
+}
+
+/** Normalize a pointer action argument. */
+function requestedPointerAction(value: unknown): PointerAction {
+  if (value === undefined) return 'click'
+  if (value === 'click' || value === 'dblclick' || value === 'move' || value === 'down' || value === 'up' || value === 'drag') {
+    return value
+  }
+  throw new InputError('bad-args', 'action must be click, dblclick, move, down, up, or drag.')
+}
+
+/**
+ * Classify how one call reaches the page.
+ *
+ * `content` stays in the frame, `trusted` prefers real input but degrades to
+ * the frame for calls that have a synthetic equivalent, and `required` has no
+ * synthetic equivalent at all.
+ */
+function inputRoute(call: ToolCall): 'content' | 'trusted' | 'required' | 'host' {
+  switch (call.name) {
+    case 'browser_click': {
+      const action = call.args.action
+      // A double click has a synthetic equivalent; movement, press/release,
+      // and drag only exist as real pointer events.
+      const gesture = action === 'move' || action === 'down' || action === 'up' || action === 'drag'
+      if (gesture || call.args.point !== undefined || call.args.trusted === true) return 'required'
+      return 'content'
+    }
+    case 'browser_press':
+      if (call.args.trusted === true) return 'required'
+      if (call.args.trusted === false) return 'content'
+      if (Array.isArray(call.args.modifiers) || call.args.action !== undefined) return 'trusted'
+      return 'content'
+    case 'browser_type':
+      if (call.args.trusted === true) return 'required'
+      if (call.args.mode === 'insert' || call.args.mode === 'keystrokes') return 'trusted'
+      return 'content'
+    case 'browser_scroll':
+      return call.args.point === undefined ? 'content' : 'required'
+    case 'browser_clipboard':
+      if (call.args.action === 'write') return 'host'
+      return call.args.method === 'system' ? 'required' : 'content'
+    case 'browser_upload':
+      return 'required'
+    default:
+      return 'content'
+  }
+}
+
+/** Session text for a trusted-input failure. */
+function trustedFailure(error: unknown): ToolAnswer | undefined {
+  if (error instanceof InputError) {
+    return { ok: false, error: { code: error.code, message: error.message } }
+  }
+  if (error instanceof InputSetupError) {
+    return { ok: false, error: { code: error.code, message: error.message } }
+  }
+  return undefined
+}
+
+/** Map a page-side selector failure to a model-facing answer. */
+function inputUnavailable(message: string): ToolAnswer {
+  return { ok: false, error: { code: 'input-unavailable', message } }
+}
+
+/** Whether a runtime is present and supported. */
+function usableInput(runtime: InputRuntime | undefined): runtime is InputRuntime {
+  return runtime !== undefined && runtime.supported
+}
+
+/** A token that only marks one file input for one upload call. */
+function uploadToken(): string {
+  try {
+    if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') return crypto.randomUUID()
+  } catch {
+    // Fall through to the time-based token.
+  }
+  return `u${Date.now().toString(36)}${Math.random().toString(36).slice(2)}`
+}
+
 async function snapshotAllFrames(
   tabId: number,
-  frames: TabFrame[],
+  allFrames: TabFrame[],
   call: ToolCall,
   budget: ContentBudget,
 ): Promise<ToolAnswer> {
-  const budgets = allocateFrameBudgets(frames, budget)
+  // `frame` narrows the snapshot to one iframe: a canvas or editor frame is
+  // usually bigger than the share it gets from a whole-page budget.
+  const requested = call.args.frame
+  let frames = allFrames
+  let budgets: Map<number, ContentBudget>
+  if (requested !== undefined) {
+    if (typeof requested !== 'number' || !Number.isInteger(requested) || requested < 0) {
+      return { ok: false, error: { code: 'bad-args', message: 'frame must be a non-negative integer.' } }
+    }
+    const single = allFrames.find((frame) => frame.frameId === requested)
+    if (single === undefined) {
+      return unavailable(`Frame ${requested} does not exist or has navigated. Call browser_snapshot again.`)
+    }
+    frames = [single]
+    budgets = new Map([[single.frameId, { maxItems: budget.maxItems, maxChars: budget.maxChars }]])
+  } else {
+    budgets = allocateFrameBudgets(allFrames, budget)
+  }
+  const scoped = requested !== undefined
   const previous = snapshotDocumentsByTab.get(tabId) ?? new Map<number, string>()
   const deltaRequested = call.args.delta === true
 
@@ -381,17 +681,20 @@ async function snapshotAllFrames(
       continue
     }
     capturedDocuments.set(frame.frameId, frameDocumentKey(frame))
-    if (frame.frameId === 0) sections.push(text)
+    if (frame.frameId === 0 && !scoped) sections.push(text)
     else sections.push(frameHeader(frame), text)
   }
 
-  if (deltaRequested) {
+  if (deltaRequested && !scoped) {
     const liveIds = new Set(frames.map((frame) => frame.frameId))
     const removed = [...previous.keys()].filter((frameId) => frameId !== 0 && !liveIds.has(frameId))
     if (removed.length > 0) sections.push(`\nRemoved iframes: ${removed.join(', ')}`)
   }
 
-  snapshotDocumentsByTab.set(tabId, capturedDocuments)
+  // A scoped snapshot must not erase the other frames' delta baselines.
+  const nextDocuments = scoped ? new Map(previous) : new Map<number, string>()
+  for (const [frameId, key] of capturedDocuments) nextDocuments.set(frameId, key)
+  snapshotDocumentsByTab.set(tabId, nextDocuments)
   return { ok: true, result: { text: wrapUntrustedContent(sections.join('\n'), budget.maxChars) } }
 }
 
@@ -426,6 +729,323 @@ async function snapshotAfterNavigation(
   return { ok: true, result: { text: `${prefix}\n\n${snapshot}` } }
 }
 
+/** Require a usable trusted-input runtime, or fail with the stable code. */
+function requireInput(runtime: InputRuntime | undefined): InputRuntime {
+  if (!usableInput(runtime)) {
+    throw new InputError(
+      'input-unavailable',
+      'This browser has no trusted input channel (it needs the Chrome debugger). '
+      + 'Target elements by index or selector instead, or install the Chrome build.',
+    )
+  }
+  return runtime
+}
+
+/** Focus (and optionally select) the addressed target before trusted input. */
+async function prepareInputTarget(
+  tabId: number,
+  frame: TabFrame,
+  args: Record<string, unknown>,
+  select: 'none' | 'contents' | 'end',
+): Promise<void> {
+  if (args.index === undefined && typeof args.selector !== 'string') return
+  await sendInputSetup(tabId, frame, {
+    op: 'prepare',
+    ...(args.index === undefined ? {} : { index: args.index as number }),
+    ...(typeof args.selector === 'string' ? { selector: args.selector } : {}),
+    select,
+  })
+}
+
+/** Validated `paths` argument for `browser_upload`. */
+function requestedPaths(value: unknown): string[] {
+  if (!Array.isArray(value) || value.length === 0) {
+    throw new InputError('bad-args', 'paths must be a non-empty list of local file paths.')
+  }
+  const paths: string[] = []
+  for (const entry of value) {
+    if (typeof entry !== 'string' || entry.trim() === '') {
+      throw new InputError('bad-args', 'paths must be a non-empty list of local file paths.')
+    }
+    paths.push(entry)
+  }
+  return paths
+}
+
+/** Trusted pointer: real mouse events at a frame-local point. */
+async function trustedClick(
+  tabId: number,
+  frame: TabFrame,
+  call: ToolCall,
+  budget: ContentBudget,
+  runtime: InputRuntime | undefined,
+): Promise<ToolAnswer | undefined> {
+  const args = call.args
+  const action = requestedPointerAction(args.action)
+  if (args.trusted === false && (args.point !== undefined || (action !== 'click' && action !== 'dblclick'))) {
+    throw new InputError('bad-args', 'Coordinates and pointer gestures cannot be delivered without trusted input; drop trusted:false.')
+  }
+  const input = requireInput(runtime)
+  const local = await resolveFramePoint(tabId, frame, args)
+  const point = await viewportPointFor(tabId, frame, local.point)
+  const modifiers = requestedModifiers(args)
+  const button = args.button === 'right' ? 'right' : args.button === 'middle' ? 'middle' : 'left'
+  const clicks = typeof args.clicks === 'number' ? args.clicks : undefined
+  const steps = typeof args.steps === 'number' ? args.steps : undefined
+  let to: Point | undefined
+  if (action === 'drag') {
+    const destination = finitePoint(args.to)
+    if (destination === undefined) throw new InputError('bad-args', 'drag needs a destination point (to).')
+    to = await viewportPointFor(tabId, frame, destination)
+  }
+  await input.run(tabId, async (client) => {
+    await dispatchPointer(client, inputStates.get(tabId), {
+      action,
+      point,
+      button,
+      modifiers,
+      ...(clicks === undefined ? {} : { clicks }),
+      ...(to === undefined ? {} : { to }),
+      ...(steps === undefined ? {} : { steps }),
+    })
+  })
+  return settleAfterInput(tabId, frame, `${action} at ${local.label}`, budget)
+}
+
+/** Trusted keyboard: real key events, including held modifiers. */
+async function trustedPress(
+  tabId: number,
+  frame: TabFrame,
+  call: ToolCall,
+  budget: ContentBudget,
+  runtime: InputRuntime | undefined,
+): Promise<ToolAnswer | undefined> {
+  const args = call.args
+  const key = typeof args.key === 'string' && args.key !== '' ? args.key : ''
+  if (key === '') throw new InputError('bad-args', 'key must not be empty.')
+  if (args.action !== undefined && args.action !== 'press' && args.action !== 'down' && args.action !== 'up') {
+    throw new InputError('bad-args', 'action must be press, down, or up.')
+  }
+  const action = args.action === 'down' || args.action === 'up' ? args.action : 'press'
+  const modifiers = requestedModifiers(args)
+  const repeat = args.repeat === undefined ? 1 : args.repeat
+  if (typeof repeat !== 'number' || !Number.isInteger(repeat) || repeat < 1 || repeat > 100) {
+    throw new InputError('bad-args', 'repeat must be an integer between 1 and 100.')
+  }
+  const input = requireInput(runtime)
+  await prepareInputTarget(tabId, frame, args, 'none')
+  await input.run(tabId, async (client) => {
+    await withFocusEmulation(client, async () => {
+      await dispatchKey(client, inputStates.get(tabId), { key, action, modifiers, repeat })
+    })
+  })
+  const chord = modifiers.length === 0 ? key : `${modifiers.join('+')}+${key}`
+  return settleAfterInput(tabId, frame, `sent key "${chord}"${repeat > 1 ? ` x${repeat}` : ''}`, budget)
+}
+
+/** Trusted text: a caret insertion or per-character key events. */
+async function trustedType(
+  tabId: number,
+  frame: TabFrame,
+  call: ToolCall,
+  budget: ContentBudget,
+  runtime: InputRuntime | undefined,
+): Promise<ToolAnswer | undefined> {
+  const args = call.args
+  const text = typeof args.text === 'string' ? args.text : ''
+  if (text === '') throw new InputError('bad-args', 'text must not be empty.')
+  const mode = args.mode === 'keystrokes' ? 'keystrokes' : 'insert'
+  const input = requireInput(runtime)
+  await prepareInputTarget(tabId, frame, args, args.replace === true ? 'contents' : 'end')
+  await input.run(tabId, async (client) => {
+    await withFocusEmulation(client, async () => {
+      if (mode === 'keystrokes') await typeAsKeystrokes(client, inputStates.get(tabId), text)
+      else await insertTextAtCaret(client, text)
+    })
+  })
+  return settleAfterInput(
+    tabId,
+    frame,
+    `entered ${text.length} characters into ${describeTarget(args)} (${mode})`,
+    budget,
+  )
+}
+
+/**
+ * Wheel input is compositor-driven: a background or frozen tab can leave the
+ * CDP command unanswered until it times out. Check visibility up front and
+ * return an instruction the caller can act on instead of a 10-second timeout.
+ */
+async function requireVisiblePageForWheel(tabId: number): Promise<void> {
+  let tab: chrome.tabs.Tab
+  try {
+    tab = await chrome.tabs.get(tabId)
+  } catch {
+    return
+  }
+  if (tab.active === false) {
+    throw new InputError(
+      'action-failed',
+      'A wheel gesture needs its page to be the active tab; a background tab can freeze and never answer the event. '
+      + 'Call browser_follow_tab { activate: true } first.',
+    )
+  }
+  const windowsApi = (globalThis as {
+    chrome?: { windows?: { get?: (id: number) => Promise<{ focused?: boolean }> } }
+  }).chrome?.windows
+  if (typeof windowsApi?.get === 'function') {
+    try {
+      const win = await windowsApi.get(tab.windowId)
+      if (win.focused === false) {
+        throw new InputError(
+          'action-failed',
+          'A wheel gesture needs the browser window in the foreground; a hidden window can freeze the event. '
+          + 'Call browser_follow_tab { activate: true } first.',
+        )
+      }
+    } catch (error: unknown) {
+      if (error instanceof InputError) throw error
+    }
+  }
+}
+
+/** Trusted wheel: canvas zoom/pan and custom scroll gestures. */
+async function trustedWheel(
+  tabId: number,
+  frame: TabFrame,
+  call: ToolCall,
+  budget: ContentBudget,
+  runtime: InputRuntime | undefined,
+): Promise<ToolAnswer | undefined> {
+  const args = call.args
+  const local = finitePoint(args.point)
+  if (local === undefined) throw new InputError('bad-args', 'point is required for a wheel gesture.')
+  const input = requireInput(runtime)
+  await requireVisiblePageForWheel(tabId)
+  const direction = args.direction === 'up' || args.direction === 'down' ? args.direction : undefined
+  const amount = typeof args.amount === 'number' ? args.amount : 400
+  const deltaX = typeof args.deltaX === 'number' ? args.deltaX : 0
+  const deltaY = typeof args.deltaY === 'number'
+    ? args.deltaY
+    : direction === 'up' ? -amount : direction === 'down' ? amount : 0
+  const modifiers = requestedModifiers(args)
+  const point = await viewportPointFor(tabId, frame, local)
+  await input.run(tabId, async (client) => {
+    await dispatchWheel(client, inputStates.get(tabId), { point, deltaX, deltaY, modifiers })
+  })
+  return settleAfterInput(
+    tabId,
+    frame,
+    `wheel delta ${Math.round(deltaX)},${Math.round(deltaY)} at ${Math.round(local.x)},${Math.round(local.y)}`,
+    budget,
+  )
+}
+
+/** Clipboard write (host path) and system-clipboard paste (trusted path). */
+async function trustedClipboard(
+  tabId: number,
+  frame: TabFrame,
+  call: ToolCall,
+  budget: ContentBudget,
+  runtime: InputRuntime | undefined,
+): Promise<ToolAnswer | undefined> {
+  const args = call.args
+  const text = typeof args.text === 'string' ? args.text : ''
+  const html = typeof args.html === 'string' && args.html !== '' ? args.html : undefined
+  // When only HTML is supplied, the plain-text flavor is the HTML's text.
+  const effectiveText = text !== '' ? text : html === undefined ? '' : plainTextFromHtml(html)
+  if (args.action === 'write') {
+    if (text === '' && html === undefined) throw new InputError('bad-args', 'text or html is required for a clipboard write.')
+    const outcome = await writeClipboard({ text: effectiveText, ...(html === undefined ? {} : { html }) })
+    return { ok: true, result: { text: describeClipboardWrite(outcome) } }
+  }
+  const input = requireInput(runtime)
+  if (text !== '' || html !== undefined) {
+    await writeClipboard({ text: effectiveText, ...(html === undefined ? {} : { html }) })
+  }
+  await prepareInputTarget(tabId, frame, args, 'none')
+  await input.run(tabId, async (client) => {
+    await withFocusEmulation(client, async () => {
+      await sendPasteShortcut(client, inputStates.get(tabId), navigator.userAgent)
+    })
+  })
+  return settleAfterInput(tabId, frame, `pasted the system clipboard into ${describeTarget(args)}`, budget)
+}
+
+/** File attachment: mark the input, let the browser process read the paths. */
+async function trustedUpload(
+  tabId: number,
+  frame: TabFrame,
+  call: ToolCall,
+  runtime: InputRuntime | undefined,
+): Promise<ToolAnswer | undefined> {
+  const args = call.args
+  if (args.index === undefined && typeof args.selector !== 'string') {
+    throw new InputError('bad-args', 'browser_upload needs index or selector for the file input.')
+  }
+  const paths = requestedPaths(args.paths)
+  const input = requireInput(runtime)
+  const token = uploadToken()
+  const mark = await sendInputSetup(tabId, frame, {
+    op: 'upload-mark',
+    token,
+    ...(args.index === undefined ? {} : { index: args.index as number }),
+    ...(typeof args.selector === 'string' ? { selector: args.selector } : {}),
+  })
+  if (mark.op !== 'upload-mark') {
+    throw new InputSetupError('action-failed', 'The page returned an unexpected upload result.')
+  }
+  try {
+    await input.run(tabId, async (client) => { await setInputFiles(client, mark.selector, paths) })
+  } finally {
+    void sendInputSetup(tabId, frame, { op: 'upload-clear', token }).catch(() => undefined)
+  }
+  return {
+    ok: true,
+    result: { text: `Attached ${paths.length} file(s) to ${describeTarget(args)}.` },
+  }
+}
+
+/**
+ * Dispatch one call through the trusted input channel.
+ *
+ * @returns the answer, or undefined when the call should fall back to the
+ *   content script's synthetic path.
+ */
+async function dispatchTrustedInput(
+  tabId: number,
+  frame: TabFrame,
+  call: ToolCall,
+  budget: ContentBudget,
+  runtime: InputRuntime | undefined,
+): Promise<ToolAnswer | undefined> {
+  const route = inputRoute(call)
+  if (route === 'content') return undefined
+  if (route === 'trusted' && !usableInput(runtime)) return undefined
+  try {
+    switch (call.name) {
+      case 'browser_clipboard':
+        return await trustedClipboard(tabId, frame, call, budget, runtime)
+      case 'browser_upload':
+        return await trustedUpload(tabId, frame, call, runtime)
+      case 'browser_click':
+        return await trustedClick(tabId, frame, call, budget, runtime)
+      case 'browser_press':
+        return await trustedPress(tabId, frame, call, budget, runtime)
+      case 'browser_type':
+        return await trustedType(tabId, frame, call, budget, runtime)
+      case 'browser_scroll':
+        return await trustedWheel(tabId, frame, call, budget, runtime)
+      default:
+        return undefined
+    }
+  } catch (error: unknown) {
+    const mapped = trustedFailure(error)
+    if (mapped !== undefined) return mapped
+    throw error
+  }
+}
+
 async function dispatchOnce(
   tabId: number,
   frames: TabFrame[],
@@ -436,6 +1056,7 @@ async function dispatchOnce(
   includeActionDelta: boolean = false,
   commitAction?: () => void,
   rollbackActionCommit?: () => void,
+  inputRuntime?: InputRuntime,
 ): Promise<ToolAnswer> {
   if (isCancelled(call, signal)) return cancelled()
   if (targetStillAllowed?.() === false) return targetChanged()
@@ -446,6 +1067,18 @@ async function dispatchOnce(
   const frame = frames.find((candidate) => candidate.frameId === frameId)
   if (frame === undefined) {
     return unavailable(`Frame ${frameId} does not exist or has navigated. Call browser_snapshot again.`)
+  }
+  const route = inputRoute(call)
+  const syntheticFallback = route === 'trusted'
+  if (route !== 'content') {
+    // Commit before dispatching: a trusted gesture cannot be withdrawn once the
+    // browser has delivered it, so the deadline must not abort it mid-flight.
+    if (STATE_CHANGING_PAGE_TOOLS.has(call.name)) commitAction?.()
+    const trusted = await dispatchTrustedInput(tabId, frame, call, budget, inputRuntime)
+    if (trusted !== undefined) return trusted
+    if (!syntheticFallback) {
+      return inputUnavailable('This browser has no trusted input channel for this action.')
+    }
   }
   // No await occurs between this guard and tabs.sendMessage, so an expired
   // approval cannot cross the final state-changing dispatch boundary.
@@ -480,11 +1113,12 @@ async function dispatchOnce(
     navigationWait?.cancel()
     return unavailable('The page content script returned an invalid response.')
   }
-  const text = answerText(response)
-  if (text === undefined) {
+  const rawText = answerText(response)
+  if (rawText === undefined) {
     navigationWait?.cancel()
     return response
   }
+  const text = syntheticFallback ? `${rawText} (synthetic)` : rawText
   if (answerNavigationPending(response) && navigationWait !== undefined) {
     const ready = await navigationWait.ready
     if (isCancelled(call, signal)) return cancelled()
@@ -552,7 +1186,9 @@ function tabManagementApproval(call: ToolCall, tab?: chrome.tabs.Tab): ApprovalP
     kind: 'action',
     action: call.name,
     summary: call.name === 'browser_follow_tab'
-      ? (locale === 'zh' ? `跟随标签页 ${tab?.id ?? '?'}：${display}` : `Follow tab ${tab?.id ?? '?'}: ${display}`)
+      ? (call.args.activate === true
+        ? (locale === 'zh' ? `跟随并切换到标签页 ${tab?.id ?? '?'}：${display}` : `Follow and activate tab ${tab?.id ?? '?'}: ${display}`)
+        : (locale === 'zh' ? `跟随标签页 ${tab?.id ?? '?'}：${display}` : `Follow tab ${tab?.id ?? '?'}: ${display}`))
       : (locale === 'zh' ? `关闭标签页 ${tab?.id ?? '?'}：${display}` : `Close tab ${tab?.id ?? '?'}: ${display}`),
     origins: origin === undefined ? [] : [origin],
     canTrust: false,
@@ -629,11 +1265,30 @@ async function dispatchTabManagementTool(
 
   if (call.name === 'browser_follow_tab') {
     if (context.followTab === undefined) return unavailable('The browser could not bind the selected tab in this session.')
+    const activate = call.args.activate === true
     context.commitAction?.()
     await context.followTab(current)
+    if (activate) {
+      if (current.windowId !== undefined) {
+        try {
+          await chrome.windows.update(current.windowId, { focused: true })
+        } catch {
+          return unavailable(`Tab ${tabId} was followed but its window could not be focused.`)
+        }
+      }
+      try {
+        await chrome.tabs.update(tabId, { active: true })
+      } catch {
+        return unavailable(`Tab ${tabId} was followed but could not be activated.`)
+      }
+    }
     return {
       ok: true,
-      result: { text: `Tab ${tabId} is now the controlled tab. Call browser_snapshot before operating its page.` },
+      result: {
+        text: activate
+          ? `Tab ${tabId} is now the controlled and active tab. Call browser_snapshot before operating its page.`
+          : `Tab ${tabId} is now the controlled tab. Call browser_snapshot before operating its page.`,
+      },
     }
   }
   if (call.name === 'browser_close_tab') {
@@ -726,6 +1381,22 @@ async function dispatchScreenshot(
   }
   if (windowId === undefined) {
     return unavailable('The controlled tab has no window, so its viewport cannot be captured.')
+  }
+  // `captureVisibleTab` photographs the last composited frame. A window that is
+  // not focused can hand back a stale image that no longer matches the DOM, so
+  // fail clearly instead of presenting old pixels as the current state.
+  const windowsApi = (globalThis as {
+    chrome?: { windows?: { get?: (id: number) => Promise<{ focused?: boolean }> } }
+  }).chrome?.windows
+  if (typeof windowsApi?.get === 'function') {
+    try {
+      const win = await windowsApi.get(windowId)
+      if (win.focused === false) {
+        return unavailable('The browser window is not focused, so a captured frame could be stale. Bring it to the front (browser_follow_tab { activate: true }) and retry.')
+      }
+    } catch {
+      // A closed window is reported by the capture call itself.
+    }
   }
   let dataUrl: string
   try {
@@ -856,11 +1527,15 @@ export async function dispatchToolCall(
       tabManagement.unrestrictedAccess || sharePageContent === 'auto',
       tabManagement.commitAction,
       tabManagement.rollbackActionCommit,
+      tabManagement.input,
     )
   } catch (error: unknown) {
     if (isCancelled(call, signal)) return cancelled()
+    const trustedFailureAnswer = devToolsFailure(error)
+    if (trustedFailureAnswer !== undefined) return trustedFailureAnswer
     if (!contentScriptReceiverMissing(error)) {
-      return unavailable('The content script stopped responding after the operation was dispatched. Call browser_snapshot before continuing.')
+      const detail = error instanceof Error ? error.message : String(error)
+      return unavailable(`The browser operation failed after it was dispatched: ${detail}`)
     }
     // Manifest content scripts do not run retroactively in tabs that were
     // already open when an unpacked extension was installed or reloaded.
@@ -897,9 +1572,13 @@ export async function dispatchToolCall(
         tabManagement.unrestrictedAccess || sharePageContent === 'auto',
         tabManagement.commitAction,
         tabManagement.rollbackActionCommit,
+        tabManagement.input,
       )
-    } catch {
-      return unavailable('The content script did not answer after it was loaded. Call browser_snapshot again before retrying.')
+    } catch (error: unknown) {
+      const trustedFailureAnswer = devToolsFailure(error)
+      if (trustedFailureAnswer !== undefined) return trustedFailureAnswer
+      const detail = error instanceof Error ? error.message : String(error)
+      return unavailable(`The content script did not answer after it was loaded (${detail}). Call browser_snapshot again before retrying.`)
     }
   }
 }
@@ -914,8 +1593,20 @@ function validateFrameTarget(call: ToolCall, frames: TabFrame[]): ToolAnswer | u
   return undefined
 }
 
+const INDEX_TARGETED_TOOLS = new Set([
+  'browser_click',
+  'browser_type',
+  'browser_press',
+  'browser_scroll',
+  'browser_clipboard',
+  'browser_upload',
+])
+
 function validateElementTarget(call: ToolCall, tabId: number, frames: TabFrame[]): ToolAnswer | undefined {
-  if (call.name !== 'browser_click' && call.name !== 'browser_type') return undefined
+  // A selector, a coordinate, or "the focused element" is self-contained; only
+  // a snapshot index needs a snapshot of the same document to resolve.
+  if (!INDEX_TARGETED_TOOLS.has(call.name)) return undefined
+  if (call.args.index === undefined) return undefined
   const frameId = requestedFrame(call.args)
   const frame = frames.find((candidate) => candidate.frameId === frameId)
   const snapshotted = snapshotDocumentsByTab.get(tabId)?.get(frameId)

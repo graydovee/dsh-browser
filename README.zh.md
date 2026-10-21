@@ -54,19 +54,23 @@ Playwright / 扩展的配对耗时比为 **1.24**（95% CI **1.16–1.34**）：
 
 | 能力 | 工具 | 说明 |
 |---|---|---|
-| 读取页面 | `browser_snapshot` | 结构化文本快照：标题/URL/正文/编号交互清单/表单字段（敏感值掩码）；`delta: true` 只返回变化 |
-| 点击元素 | `browser_click` | 按编号点击链接/按钮/复选框等 |
-| 填写表单 | `browser_type` | 输入文本（React/Vue 受控组件兼容），`replace` 清空重填 |
-| 按键 | `browser_press` | 键盘事件（Enter/Tab/Escape/方向键…） |
-| 滚动 | `browser_scroll` | 视口滚动（up/down/top/bottom） |
+| 读取页面 | `browser_snapshot` | 结构化文本快照：标题/URL/正文/编号交互清单/表单字段（敏感值掩码）；`delta: true` 只返回变化，`frame` 单读一个 iframe，`query` 按文本/选择器/角色定位任意元素并给出选择器与坐标 |
+| 指针 | `browser_click` | 按编号或选择器点击/双击/悬停/按下/抬起/拖拽；画布等无身份目标可传坐标 `point` |
+| 文本 | `browser_type` | 输入文本（React/Vue 受控组件兼容），`replace` 清空重填；`mode` 可选插入或逐键输入（自动补全类字段） |
+| 按键 | `browser_press` | 单键或组合键（`modifiers`），`action: down/up` 跨调用按住，`repeat` 重复 |
+| 滚动 | `browser_scroll` | 视口/容器滚动（up/down/top/bottom）；带 `point` 时在该坐标发送真实滚轮（画布缩放/自定义手势） |
+| 剪贴板 | `browser_clipboard` | `write` 写入系统剪贴板（文本/HTML）；`paste` 以粘贴事件或真实快捷键粘贴到页面 |
+| 文件 | `browser_upload` | 把本机文件附加到 `input[type=file]`（Chrome） |
 | 页面导航 | `browser_navigate` / `browser_open_tab` / `browser_open_window` / `browser_back` / `browser_forward` / `browser_reload` | 受控标签页内导航、新开标签页并跟随（`active:false` 时保持当前页在前台），或新开浏览器窗口（`focused:false` 时不抢焦点） |
 | 列出标签页 | `browser_list_tabs` | 列出可访问标签页的稳定 ID、标题、URL、窗口/顺序以及活动/受控状态 |
-| 跟随标签页 | `browser_follow_tab` | 将后续浏览器工具绑定到 `browser_list_tabs` 返回的标签页，而不激活该标签页 |
+| 跟随标签页 | `browser_follow_tab` | 将后续浏览器工具绑定到 `browser_list_tabs` 返回的标签页；默认不激活，`activate: true` 才切到前台 |
 | 关闭标签页 | `browser_close_tab` | 关闭 `browser_list_tabs` 返回的标签页 |
 | 读取区域 | `browser_get_text` | 懒加载内容 / 局部文本 |
 | 等待稳定 | `browser_wait` | 页面加载与渲染稳定检测 |
 | 发送图片 | `session.prompt` / `session.attachment` | 按宿主能力启用图片草稿、纯图片消息和持久历史预览 |
 | 引用选中内容 | 侧栏输入框 | 在页面里划选的文字会出现在输入框，随下一条消息一起发送，并带上来源与不可信内容边界 |
+
+输入层是通用原语而不是应用适配：键盘、指针、文本、剪贴板、文件都按「元素身份或坐标」寻址，任何富文本、画布、代码编辑器或拖拽界面都用同一组参数驱动。所有输入默认在后台执行——不激活标签页、不聚焦窗口、不移动系统鼠标；需要真实事件（`isTrusted`、浏览器默认行为）时走 Chrome 的调试器通道，Firefox 自动降级为合成事件并在结果里标注 `(synthetic)`。滚轮手势与截图例外：滚轮要求页面是活动标签页且窗口聚焦（后台页会被 Chrome 冻结，工具会立刻报错并提示先 `browser_follow_tab {activate:true}`），截图同样要求活动标签页与聚焦窗口，否则可能拿到过期帧。
 
 ## 组成
 

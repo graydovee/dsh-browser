@@ -12,14 +12,15 @@ dsh 的**浏览器操作端**：让模型直接读取并操作你在浏览器里
 
 | 能力 | 动作 | 说明 |
 |---|---|---|
-| 读取页面 | `browser_snapshot` | 标题/URL/正文/编号交互清单/表单字段（敏感值掩码）；`delta: true` 只返回变化，省 token |
-| 点击元素 | `browser_click` | 按编号点击（链接/按钮/复选框…），React/Vue 组件兼容 |
-| 填写表单 | `browser_type` | 输入文本，`replace` 清空重填 |
-| 按键 | `browser_press` | Enter/Tab/Escape/方向键等 |
-| 滚动 | `browser_scroll` | 视口滚动（up/down/top/bottom） |
+| 读取页面 | `browser_snapshot` | 标题/URL/正文/编号交互清单/表单字段（敏感值掩码）；`delta: true` 只返回变化，`frame` 单读 iframe，`query` 定位任意元素并给出选择器与坐标 |
+| 指针 | `browser_click` | 按编号或选择器点击/双击/悬停/按下/抬起/拖拽，或按 frame 内坐标操作 |
+| 文本 | `browser_type` | 输入文本，`replace` 清空重填；`mode` 选择光标插入或逐字符按键 |
+| 按键 | `browser_press` | 单键与组合键，可跨调用按住修饰键 |
+| 滚动 | `browser_scroll` | 视口/容器滚动，或在坐标处发送真实滚轮手势 |
+| 剪贴板 / 文件 | `browser_clipboard` / `browser_upload` | 写入或粘贴文本与富文本；把本机文件附加到 file input |
 | 导航 | `browser_navigate` / `browser_open_tab` / `browser_open_window` / `browser_back` / `browser_forward` / `browser_reload` | 受控标签页内跳转、新开标签页并跟随，或新开浏览器窗口 |
 | 列出标签页 | `browser_list_tabs` | 列出可访问标签页的稳定 ID、标题、URL 和活动/受控状态 |
-| 跟随标签页 | `browser_follow_tab` | 将后续浏览器工具绑定到已列出的标签页，而不激活该标签页 |
+| 跟随标签页 | `browser_follow_tab` | 将后续浏览器工具绑定到已列出的标签页；默认后台，`activate: true` 才切前台 |
 | 关闭标签页 | `browser_close_tab` | 关闭已列出的标签页 |
 | 读区域 | `browser_get_text` | 懒加载内容 / 局部文本 |
 | 等待 | `browser_wait` | 页面加载与渲染稳定检测 |
