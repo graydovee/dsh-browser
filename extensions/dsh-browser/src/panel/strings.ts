@@ -75,12 +75,12 @@ export interface PanelCopy {
     detect: string
     detectCancel: string
     detectHelp: string
-    detectScanning: (done: number, total: number) => string
+    detectProgress: (done: number, total: number) => string
     detectEmpty: string
     detectPick: string
     detectCurrent: string
     detectConnected: (address: string) => string
-    detectSource: Record<'fixed' | 'beacon' | 'scan', string>
+    detectSource: Record<'fixed' | 'beacon', string>
     tokenHelp: string
     tokenPlaceholder: string
     pageSharing: string
@@ -372,13 +372,13 @@ const EN: PanelCopy = {
     bridgePlaceholder: 'Auto-detect (desktop beacon 43189–43198 included)',
     detect: 'Detect',
     detectCancel: 'Cancel',
-    detectHelp: 'Scans this machine once and lists every local dsh instance.',
-    detectScanning: (done, total) => `Scanning ${done} / ${total} ports…`,
+    detectHelp: 'Probes this machine once and lists every local dsh instance.',
+    detectProgress: (done, total) => `Detecting ${done} / ${total} ports…`,
     detectEmpty: 'No service found.',
     detectPick: 'Select an instance to fill in its address.',
     detectCurrent: 'in use',
     detectConnected: (address) => `Connected to ${address}`,
-    detectSource: { fixed: 'fixed port', beacon: 'beacon', scan: 'scan' },
+    detectSource: { fixed: 'fixed port', beacon: 'beacon' },
     tokenHelp: 'Required by Firefox and remote deployments',
     tokenPlaceholder: 'Required for Firefox / remote deployments',
     pageSharing: 'Page content sharing',
@@ -672,13 +672,13 @@ const ZH: PanelCopy = {
     bridgePlaceholder: '自动检测（含桌面版信标 43189–43198）',
     detect: '自动检测',
     detectCancel: '取消',
-    detectHelp: '扫描一次本机，并列出所有本地 dsh 实例。',
-    detectScanning: (done, total) => `正在扫描 ${done} / ${total} 个端口…`,
+    detectHelp: '探测一次本机，并列出所有本地 dsh 实例。',
+    detectProgress: (done, total) => `正在探测 ${done} / ${total} 个端口…`,
     detectEmpty: '未找到服务。',
     detectPick: '点击实例即可填入它的地址。',
     detectCurrent: '当前使用',
     detectConnected: (address) => `已连接：${address}`,
-    detectSource: { fixed: '固定端口', beacon: '信标', scan: '扫描' },
+    detectSource: { fixed: '固定端口', beacon: '信标' },
     tokenHelp: 'Firefox 和远程部署需要填写',
     tokenPlaceholder: 'Firefox / 远程部署时填写',
     pageSharing: '页面内容共享',

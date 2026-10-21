@@ -2,12 +2,10 @@
  * Bridge discovery for the side panel.
  *
  * DSH Desktop launches its host with `--port 0`, so the local Web port changes
- * on every launch. Discovery therefore runs in two stages:
- *
- * 1. a bounded group of known ports — the URL that worked last time, the
- *    `dsh web` defaults, and the plugin's fixed discovery beacon;
- * 2. one sweep of the platform's ephemeral range, which is where the OS puts a
- *    host that has no beacon (an older plugin, or a beacon port already taken).
+ * on every launch. Discovery therefore probes a bounded list of known ports —
+ * the URL that worked last time, the `dsh web` defaults, and the plugin's fixed
+ * discovery beacon (43189–43198), which every current host binds on its first
+ * free port. The platform's ephemeral range is never swept.
  *
  * The startup pass stops at the first answer; the settings page enumerates
  * everything so the user can pick between several local instances. Nothing here
@@ -23,16 +21,12 @@ import {
   parseBridgeConfigPayload,
   type BridgeConfigPayload,
 } from '@yuxianglin/dsh-bridge-browser/src/protocol.ts'
-import { SWEEP_CONCURRENCY, SWEEP_DEADLINE_MS, SWEEP_PROBE_TIMEOUT_MS } from './port-scan.ts'
 
 /** How long one known-port probe may take before it counts as absent. */
 export const GROUP_PROBE_TIMEOUT_MS = 1_500
 
-/** How often a sweep reports progress. */
-const PROGRESS_INTERVAL_MS = 250
-
 /** Where a discovered instance came from. */
-export type InstanceSource = 'fixed' | 'beacon' | 'scan'
+export type InstanceSource = 'fixed' | 'beacon'
 
 /** One reachable dsh bridge. */
 export interface BridgeInstance {
@@ -64,7 +58,7 @@ export interface DiscoveryEnv {
   probe(port: number, timeoutMs: number): Promise<BridgeConfigPayload | undefined>
   /** Whether the caller still wants results (panel lease, user cancellation). */
   shouldContinue(): boolean
-  /** Called while a sweep runs, throttled. */
+  /** Called once before the first probe and again after every group finishes. */
   onProgress?(progress: DiscoveryProgress): void
 }
 
@@ -77,8 +71,6 @@ export interface DiscoveryGroup {
 /** What one pass should probe, in order. */
 export interface DiscoveryPlan {
   groups: DiscoveryGroup[]
-  /** Ports to sweep after the groups. */
-  sweep: number[]
 }
 
 /** Inputs for {@link planDiscovery}. */
@@ -87,8 +79,6 @@ export interface DiscoveryPlanOptions {
   rememberedUrl?: string
   /** URL already tried and known to fail, never probed again. */
   excludeUrl?: string
-  /** Ports of the platform's ephemeral range (see `port-scan.ts`). */
-  sweepPorts: readonly number[]
 }
 
 /** Loopback URL of one port's discovery endpoint. */
@@ -134,8 +124,8 @@ export async function readBridgeConfig(
  * The remembered URL comes first (the common case: the next launch reused a
  * port), then the `dsh web` defaults, then the beacon block. Ports appearing
  * twice are probed once.
- * @param options - remembered URL, an address to skip, and the sweep ports.
- * @returns groups plus a sweep list that excludes what the groups already cover.
+ * @param options - remembered URL and an address to skip.
+ * @returns the ordered probe groups.
  */
 export function planDiscovery(options: DiscoveryPlanOptions): DiscoveryPlan {
   const probed = new Set<number>()
@@ -151,10 +141,7 @@ export function planDiscovery(options: DiscoveryPlanOptions): DiscoveryPlan {
   if (remembered !== undefined) push('fixed', [remembered])
   push('fixed', LEGACY_BRIDGE_PORTS)
   push('beacon', BEACON_PORTS)
-  return {
-    groups,
-    sweep: options.sweepPorts.filter((port) => !probed.has(port)),
-  }
+  return { groups }
 }
 
 /**
@@ -185,6 +172,12 @@ export async function discoverInstances(
     if (!existing.sources.includes(source)) existing.sources.push(source)
   }
   const snapshot = (): BridgeInstance[] => [...found.values()]
+  const total = plan.groups.reduce((sum, group) => sum + group.ports.length, 0)
+  let done = 0
+  const report = (): void => {
+    env.onProgress?.({ done, total, instances: snapshot() })
+  }
+  report()
 
   for (const group of plan.groups) {
     if (!env.shouldContinue()) return snapshot()
@@ -194,58 +187,10 @@ export async function discoverInstances(
     for (const { payload } of answers) {
       if (payload !== undefined) record(payload, group.source)
     }
+    done += group.ports.length
+    report()
     if (options.stopAtFirstHit && found.size > 0) return snapshot()
   }
 
-  if (plan.sweep.length > 0 && env.shouldContinue()) {
-    await sweepPorts(plan.sweep, env, record, snapshot)
-  }
   return snapshot()
-}
-
-/**
- * Probe a port list with bounded concurrency, collecting every answer.
- * @param ports - ports to probe, in ascending order.
- * @param env - probe and cancellation hooks.
- * @param record - sink for one accepted answer.
- * @param snapshot - current instance list, for progress reporting.
- */
-async function sweepPorts(
-  ports: readonly number[],
-  env: DiscoveryEnv,
-  record: (payload: BridgeConfigPayload, source: InstanceSource) => void,
-  snapshot: () => BridgeInstance[],
-): Promise<void> {
-  const startedAt = Date.now()
-  const total = ports.length
-  let next = 0
-  let done = 0
-  let lastEmit = 0
-  const emit = (force: boolean): void => {
-    if (env.onProgress === undefined) return
-    const now = Date.now()
-    if (!force && now - lastEmit < PROGRESS_INTERVAL_MS) return
-    lastEmit = now
-    env.onProgress({ done, total, instances: snapshot() })
-  }
-  emit(true)
-  const worker = async (): Promise<void> => {
-    for (;;) {
-      if (!env.shouldContinue()) return
-      if (Date.now() - startedAt > SWEEP_DEADLINE_MS) return
-      const index = next
-      next += 1
-      if (index >= ports.length) return
-      const payload = await env.probe(ports[index] as number, SWEEP_PROBE_TIMEOUT_MS)
-      done += 1
-      if (payload !== undefined) {
-        record(payload, 'scan')
-        emit(true)
-      } else {
-        emit(false)
-      }
-    }
-  }
-  await Promise.all(Array.from({ length: Math.min(SWEEP_CONCURRENCY, ports.length) }, worker))
-  emit(true)
 }

@@ -2565,7 +2565,7 @@ export function App(): React.JSX.Element {
               <small>
                 {detectProgress === null
                   ? copy.settings.detectHelp
-                  : copy.settings.detectScanning(detectProgress.done, detectProgress.total)}
+                  : copy.settings.detectProgress(detectProgress.done, detectProgress.total)}
               </small>
             </div>
             {detectError === null ? null : <small className="settings-error">{detectError}</small>}
