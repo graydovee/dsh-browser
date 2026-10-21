@@ -12,14 +12,15 @@ Part of the **graydovee fork** of [Lum1104/dsh-browser](https://github.com/Lum11
 
 | Capability | Action | Notes |
 |---|---|---|
-| Read page | `browser_snapshot` | Title/URL/main text/numbered inventory/form fields (sensitive values masked); `delta: true` returns only changes |
-| Click element | `browser_click` | Click by inventory number (links/buttons/checkboxes…), React/Vue compatible |
-| Fill forms | `browser_type` | Type text; `replace` clears first |
-| Keys | `browser_press` | Enter/Tab/Escape/arrows etc. |
-| Scroll | `browser_scroll` | Viewport scrolling (up/down/top/bottom) |
+| Read page | `browser_snapshot` | Title/URL/main text/numbered inventory/form fields (sensitive values masked); `delta: true` returns only changes, `frame` reads one iframe, `query` locates any element with selector and rect |
+| Pointer | `browser_click` | Click/double-click/hover/press/release/drag by index or selector, or at frame-local coordinates |
+| Text | `browser_type` | Type text; `replace` clears first; `mode` chooses insertion or per-character keys |
+| Keys | `browser_press` | Keys and chords, including held modifiers across calls |
+| Scroll | `browser_scroll` | Viewport/container scrolling, or a real wheel gesture at a point |
+| Clipboard / files | `browser_clipboard` / `browser_upload` | Write or paste text and rich HTML; attach local files to a file input |
 | Navigate | `browser_navigate` / `browser_open_tab` / `browser_open_window` / `browser_back` / `browser_forward` / `browser_reload` | Navigation inside the controlled tab, open a URL in a new tab, or open a new browser window |
 | List tabs | `browser_list_tabs` | List accessible tabs with stable IDs, titles, URLs, and active/controlled state |
-| Follow tab | `browser_follow_tab` | Bind later browser tools to a listed tab without activating it |
+| Follow tab | `browser_follow_tab` | Bind later browser tools to a listed tab; stays in the background unless `activate: true` |
 | Close tab | `browser_close_tab` | Close a listed tab |
 | Read region | `browser_get_text` | Lazy-loaded content / partial text |
 | Wait | `browser_wait` | Page load and render-settle detection |

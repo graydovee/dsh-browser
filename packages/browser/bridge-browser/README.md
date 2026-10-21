@@ -114,10 +114,15 @@ Each `respond` carries a globally unique transport id as well as the host intera
 
 | Tool | Purpose |
 |---|---|
-| `browser_snapshot` | Structured text snapshot (title/URL/main/inventory/forms); `delta: true` returns only changes. |
-| `browser_click` / `browser_type` / `browser_press` | Operate inventory items by stable index. |
-| `browser_scroll` / `browser_navigate` / `browser_open_tab` / `browser_open_window` / `browser_back` / `browser_forward` / `browser_reload` | Page movement. |
+| `browser_snapshot` | Structured text snapshot (title/URL/main/inventory/forms); `delta: true` returns only changes, `frame` reads one iframe, and `query` locates elements by text/selector/role with selector and rect. |
+| `browser_click` | Pointer interaction: click/double-click/hover/press/release/drag by index or selector, or at frame-local coordinates (`point`); `trusted: true` asks for real mouse events. |
+| `browser_type` | Enter text by index/selector or into the focused element; `replace` selects existing content first, and `mode` chooses caret insertion or per-character keys. |
+| `browser_press` | Single keys or chords (`modifiers`), `action: down/up` to hold a key across calls, `repeat` to repeat. |
+| `browser_clipboard` / `browser_upload` | Write/paste text and rich HTML; attach local files to a file input (Chrome for system paste and upload). |
+| `browser_scroll` / `browser_navigate` / `browser_open_tab` / `browser_open_window` / `browser_back` / `browser_forward` / `browser_reload` | Page movement; `browser_scroll` with `point` sends a real wheel gesture. |
 | `browser_get_text` / `browser_wait` | Read regions / settle detection. |
+
+Input delivery: element targeting and plain text stay in the content script and need no debugger. Coordinate clicks, pointer gestures, wheel gestures, real chords, caret insertion, system paste, and file uploads use Chrome's debugger-backed input channel; when the platform has none the call either degrades to synthetic events (marked `(synthetic)` in the result) or fails with `input-unavailable`. Input never activates the tab, focuses the window, or moves the system pointer; `browser_follow_tab { activate: true }` is the only explicit way to bring a page to the front. A wheel gesture requires the page to be the active tab in a focused window (a frozen background page would never answer it, so the guard fails fast with that hint); screenshots need the same focus.
 
 ### Developer tools (high privilege)
 
