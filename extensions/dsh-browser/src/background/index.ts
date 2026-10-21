@@ -52,7 +52,6 @@ import { BRIDGE_CONFIG_PATH, BRIDGE_PATH, DEVTOOLS_CAPS_VERSION, parseBridgeConf
 import { BridgeClient, type BridgeState } from './bridge.ts'
 import { createRpc } from './rpc.ts'
 import { discoverInstances, planDiscovery, readBridgeConfig } from './discovery.ts'
-import { rangePorts, sweepRanges } from './port-scan.ts'
 import { listTabFrames } from './frames.ts'
 import {
   dispatchOpenTab,
@@ -132,10 +131,8 @@ const SETTINGS_DEFAULTS: Settings = {
 
 /**
  * 自动探测：DSH Desktop 启动 Host 时用 `--port 0`，本地 Web 端口每次启动都由系统
- * 随机分配（Windows/macOS 49152–65535，Linux 32768–60999），固定端口列表无法预知。
- * 因此探测分两段：
- * 1. 上次成功的地址 → `dsh web` 默认端口 → 插件固定端口信标（43189–43198）；
- * 2. 平台临时端口区间扫描（兜底没有信标的旧插件）。
+ * 随机分配，固定端口列表无法预知。因此按以下顺序探测：
+ * 上次成功的地址 → `dsh web` 默认端口 → 插件固定端口信标（43189–43198）。
  * 只在面板打开时跑一次、或用户点「自动检测」时跑；未找到即终态，不再重试。
  */
 const LEGACY_LOCAL_URL = 'ws://127.0.0.1:3080'
@@ -156,20 +153,6 @@ let lastBridgeUrl: string | undefined
 let connectedAddress: string | undefined
 /** 用户点「自动检测」发起的枚举，同一时间只跑一个。 */
 let activeScan: { id: string; controller: AbortController } | undefined
-/** `chrome.runtime.getPlatformInfo()` 的平台标识，用于选择扫描区间。 */
-let platformOs: string | undefined
-
-/** 读取平台标识（失败时按未知平台处理）。 */
-async function ensurePlatformOs(): Promise<void> {
-  if (platformOs !== undefined) return
-  try {
-    const info = await chrome.runtime.getPlatformInfo?.()
-    platformOs = typeof info?.os === 'string' ? info.os : undefined
-  } catch {
-    platformOs = undefined
-  }
-}
-
 /** 回环地址判定：只有本机地址才在连接失败时回落到自动探测。 */
 function isLocalBridgeAddress(url: string): boolean {
   try {
@@ -224,7 +207,6 @@ async function discoverBridgeUrl(
   excludeUrl?: string,
 ): Promise<string | undefined> {
   await discoveryMemory
-  await ensurePlatformOs()
   if (!shouldContinue()) return undefined
   const previousState = discoveryState
   discoveryLatch = 'running'
@@ -234,7 +216,6 @@ async function discoverBridgeUrl(
     const instances = await discoverInstances(planDiscovery({
       ...(lastBridgeUrl === undefined ? {} : { rememberedUrl: lastBridgeUrl }),
       ...(excludeUrl === undefined ? {} : { excludeUrl }),
-      sweepPorts: rangePorts(sweepRanges(platformOs)),
     }), {
       probe: (port, timeoutMs) => readBridgeConfig(port, timeoutMs),
       shouldContinue,
@@ -1721,9 +1702,9 @@ async function startBridge(): Promise<void> {
 /**
  * Enumerate every local instance for the settings picker.
  *
- * Unlike the startup pass this never stops early: the fixed and beacon groups
- * run first for instant feedback, then the whole ephemeral range is swept.
- * Results stream back to the requesting panel; cancellation only ends the sweep.
+ * Unlike the startup pass this never stops early: every fixed and beacon group
+ * is probed so the picker can list every local instance.
+ * Results stream back to the requesting panel; cancellation ends the pass.
  * @param port - panel port that asked.
  * @param id - request id echoed on every message.
  */
@@ -1740,10 +1721,8 @@ async function runPanelDiscovery(port: chrome.runtime.Port, id: string): Promise
   }
   try {
     await discoveryMemory
-    await ensurePlatformOs()
     const instances = await discoverInstances(planDiscovery({
       ...(lastBridgeUrl === undefined ? {} : { rememberedUrl: lastBridgeUrl }),
-      sweepPorts: rangePorts(sweepRanges(platformOs)),
     }), {
       probe: (candidate, timeoutMs) => readBridgeConfig(candidate, timeoutMs),
       shouldContinue: () => !controller.signal.aborted,

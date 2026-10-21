@@ -172,8 +172,8 @@ describe('background bridge lifecycle', () => {
 
     const panel = panelPort()
     chromeMock.onConnect.emit(panel.port)
-    // The fixed-port group is probed as one batch; the sweep only starts once
-    // every probe of that group has failed.
+    // The fixed-port group is probed as one batch; the beacon group only starts
+    // once every probe of that group has failed.
     await vi.waitFor(() => { expect(fetchMock.mock.calls.length).toBeGreaterThanOrEqual(4) })
     expect(chromeMock.alarms.create).toHaveBeenCalledWith('bridge-keepalive', { periodInMinutes: 0.5 })
     const started = fetchMock.mock.calls.length

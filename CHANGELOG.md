@@ -2,6 +2,9 @@
 
 **English** | [中文](CHANGELOG.zh-CN.md)
 
+## latest
+* 2026-10-21 [Refactor] Auto-detect no longer sweeps the local ephemeral port range.
+
 ## v0.1.7
 * 2026-10-19 [Fix] Fix a test that could make automated checks fail intermittently; no functional change.
 * 2026-10-19 [Feature] The page-handoff prompt gains "jump back to the assistant page", which switches the browser back to the page the assistant is working on; the two existing choices are renamed after their subject ("assistant stays on the original page", "assistant follows the current page") so they are easier to tell apart.
