@@ -25,7 +25,8 @@ describe('plugin manifest', () => {
     expect(dsh.bundle?.patch).toBe('./cordis.patch.yml')
     expect(dsh.client?.platform).toBe('web')
     expect(dsh.client?.inject).toEqual(expect.arrayContaining(['@deepseek-ai/dsh-client-ui-slots']))
-    // The workspace pins 0.2.1-rc.2; the range admits later 0.2.x releases.
+    // The workspace pins 0.2.1-rc.3; the range keeps 0.2.1-rc.2 hosts supported
+    // (its plugin interfaces are unchanged) and admits later 0.2.x releases.
     expect(engines.dsh).toBe('^0.2.1-rc.2')
     expect(engines.node).toBe('>=24')
   })
