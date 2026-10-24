@@ -120,7 +120,7 @@ git log -1 --format=%B fork/main | sed -n '1,8p'      # Upstream-PR / Source / A
 | `CHANGELOG*`、`AGENTS.md`、`.github/workflows/*`、`README.i18n.yaml` | 保留 fork 版本 |
 | 桥插件 / 扩展产品代码 | 以上游为准；与 fork 自研功能语义冲突时手工并集，必要时拆 `adapt` 提交 |
 | `pnpm-lock.yaml` | 重新 `pnpm install` 生成，不手工合并；`@deepseek-ai/*` 仍在 `0.2.1-rc.x` 线 |
-| 文档里写死的上游版本号（如“dsh 0.2.0-rc.2”） | 统一改成 fork 的 `0.2.1-rc.2` |
+| 文档里写死的上游版本号（如“dsh 0.2.0-rc.2”） | 统一改成 fork 的 `0.2.1-rc.3` |
 | 升级提示里的具体版本号（如“从 0.1.5 之前升级”） | 改成不猜版本号的措辞（“从旧构建升级”），中英与两个安装脚本一致 |
 
 **踩坑记录（务必避免）**：`git checkout --ours <file>` 会把该文件**整体**回退到 Header 版，**连带丢掉上游自动合并成功的新增行**（2026-10-19 导入 #110 时，`manifest.json` 的 stable `key` 就是这样被抹掉的）。正确做法二选一：
