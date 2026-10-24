@@ -419,6 +419,6 @@ print_pair "• 点击工具栏中的 DeepSeek 鲸鱼图标，打开侧边栏" "
 print_pair "• 扩展会自动发现本机 dsh，无需填写地址或 token" "The extension discovers local dsh automatically; no address or token is required"
 printf '• 启动固定版本：cd %q && pnpm start\n' "$ROOT"
 printf '   Start the pinned version: cd %q && pnpm start\n' "$ROOT"
-print_pair "• 或直接启动固定版本：npx @deepseek-ai/dsh@0.2.1-rc.2 web" "Or start the pinned version directly: npx @deepseek-ai/dsh@0.2.1-rc.2 web"
+print_pair "• 或直接启动固定版本：npx @deepseek-ai/dsh@0.2.1-rc.3 web" "Or start the pinned version directly: npx @deepseek-ai/dsh@0.2.1-rc.3 web"
 printf '\n'
 print_pair "这是 graydovee fork；上游项目在 https://github.com/Lum1104/dsh-browser（欢迎给上游点 Star）。" "This is the graydovee fork; upstream lives at https://github.com/Lum1104/dsh-browser (stars belong there)."

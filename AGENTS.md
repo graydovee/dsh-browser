@@ -77,7 +77,7 @@ powershell scripts/install.ps1          # 安装/升级（Windows）：同上，
 
 ## Commit & Pull Request Guidelines
 
-- 提交信息沿用现有风格：`feat|fix|docs|test|chore(scope): 中文摘要`，保持单次提交范围收敛、可独立回滚。
+- 提交信息沿用现有风格：`feat|fix|docs|test|chore(scope): 中文摘要`，保持单次提交范围收敛、可独立回滚。合并提交（PR 分支 `--no-ff` 同步承载分支、以及 PR 合并）同样直接复用功能名（`<type>(<scope>): <功能>`）。
 - **合入顺序见下《分支与合入流程》**；changelog 的写法见《CHANGELOG 规则》，漏更新 changelog 的分支不视为可合入。
 - PR 按 `.github/PULL_REQUEST_TEMPLATE.md` 填写：说明改动、验证命令与结果、平台/浏览器影响范围。
 
@@ -90,9 +90,10 @@ fork 自研功能的开发与合入按 **`.agents/notes/fork-feature-flow.md`** 
 - 给 `main` 开 PR，或在合并前把 `main` 追平到 PR 分支；
 - 处理 `CHANGELOG` / `README.i18n.yaml` 冲突，或判断某项改动是否属于「产品改动」。
 
-三项固定事实：
+四项固定事实：
 
 - 承载分支 `omdsh-dev/dsh-browser` 是对上游的 PR 承载分支（PR #121 的 head）。
+- **合入 `main` 经 PR 且等 CI 绿**：功能分支先 cherry-pick 进承载分支，再从 `main` 切出的 PR 分支 `--no-ff` 合并承载分支，并在**同一个 PR** 里补中英 changelog；CI 通过后经 PR 合并。步骤见 `.agents/notes/fork-feature-flow.md` 第 5 步，约束见下《`main` 分支保护》。
 - 上游恢复维护、PR 合入后，把上游 `main` 合回本仓库 `main`（同样走 `main` 的 PR），`omdsh-dev/dsh-browser` 再按下一轮功能重新积攒。
 - 导入上游第三方 PR 走另一条通路，见下《上游 PR 引入流程》。
 
@@ -125,7 +126,7 @@ gh api -X DELETE repos/graydovee/dsh-browser/branches/main/protection
 
 ### CHANGELOG 规则
 
-- **changelog 的更新时机是"功能分支合入 `omdsh-dev/dsh-browser` 之后、合入 `main` 之前"**（落地方式见 `.agents/notes/fork-feature-flow.md` 第 5 步）；缺 changelog 的合并不视为完成。
+- **changelog 与代码在同一个 PR 合入 `main`**：功能分支先合入承载分支 `omdsh-dev/dsh-browser`，再从 `main` 切出 PR 分支合并承载分支，并在该 PR 内补 `CHANGELOG.md` / `CHANGELOG.zh-CN.md`；等 CI 绿后经 PR 合并（落地方式见 `.agents/notes/fork-feature-flow.md` 第 5 步）。
 - 记录逐版本的用户可见变化，最新在前；依赖版本、纯配置与纯文档调整不记。这些约束属于本文件，不要写进 changelog 正文。
 - **中英双语成对**：`CHANGELOG.md` 是英文主版本（默认页），`CHANGELOG.zh-CN.md` 是中文版本；两者地位相同，同一次改动必须同时更新两侧，条目一一对应。
 - **一个功能分支（一次合并）只写一条条目**：同一分支的后续提交**改写**这条条目（补全范围、修正措辞），而不是新增；只有另起一个分支做另一件事才新增条目。条目在合入 `main` 前定稿。

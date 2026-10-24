@@ -43,10 +43,10 @@ cd $HOME\.dsh\dsh-browser; pnpm start
 
 Developers can instead clone the repository and run `./scripts/install.sh` followed by `pnpm start` from that checkout. The local mode uses the current branch without downloading or overwriting source files. Both installation modes register the same profile bundle; build tools resolve only from the selected workspace and never from a parent checkout or parent `node_modules` directory.
 
-This release is adapted to and verified against dsh 0.2.1-rc.2; older DSH releases are not supported:
+This release is adapted to and verified against dsh 0.2.1-rc.3; 0.2.1-rc.2 exposes the same plugin interfaces and stays supported, while older DSH releases are not supported:
 
 ```sh
-npx @deepseek-ai/dsh@0.2.1-rc.2 web
+npx @deepseek-ai/dsh@0.2.1-rc.3 web
 ```
 
 The package manifest declares that support itself: `engines.dsh` (`^0.2.1-rc.2`) and `dsh.manifestVersion: 1` let dsh refuse an incompatible host before loading the plugin, and the Plugins page reads the localized title and description from `locale/en.json` / `locale/zh.json` plus the icon from `icon.svg` without activating the plugin.

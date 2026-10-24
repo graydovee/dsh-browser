@@ -1,4 +1,4 @@
-# fork 自研功能的 PR 流程（功能分支 → 承载分支 → 上游 PR → fork `main`）
+# fork 自研功能的 PR 流程（功能分支 → 承载分支 → 上游 PR #121 → 经 PR 合入 fork `main`）
 
 适用于 fork 自研的功能与修复。导入上游第三方 PR 走另一条通路，见 `upstream-pr-flow.md`。
 
@@ -66,7 +66,10 @@ gh pr comment 121 -R omdsh-dev/dsh-browser --body-file /tmp/comment.md
 
 ## 5. 第 4 步：开 PR 合入 `main`
 
-- 从 `main` 切 PR 分支，`--no-ff` 合并承载分支，保留"这个功能来自哪条承载分支"的痕迹。
+> `main` 经 PR 合入：本步产出的 PR 同时携带代码（承载分支的合并）与中英 changelog，CI 绿后合并。
+
+- 从 `main` 切 PR 分支，`--no-ff` 合并承载分支，保留"这个功能来自哪条承载分支"的痕迹；
+  该合并提交**直接复用功能名**（`<type>(<scope>): <功能>`）。
 - 在同一分支上提交 changelog（`## latest` 顶部各一条，中英一一对应）。
 - 代码与 changelog 放在**同一个 PR** 里提交，PR 标题写具体功能（如 `feat(panel): …`）。
 - PR 正文按 `.github/PULL_REQUEST_TEMPLATE.md` 填；"测试"一节写实际跑过的命令与结果，真机手测写浏览器与边界路径。
@@ -77,7 +80,7 @@ git worktree add ../dsh-browser-main main      # main 被别的 checkout 占用�
 cd ../dsh-browser-main
 git checkout -b feat/$slug-to-main
 
-git merge omdsh-dev/dsh-browser --no-ff -m "merge: 同步承载分支（<功能>）"
+git merge omdsh-dev/dsh-browser --no-ff -m "<type>(<scope>): <功能>"   # 合并提交直接复用功能名
 
 git add CHANGELOG.md CHANGELOG.zh-CN.md
 git commit -m "docs(changelog): 记录<功能>"
@@ -85,6 +88,11 @@ git push fork feat/$slug-to-main
 
 gh pr create -R graydovee/dsh-browser --base main --head feat/$slug-to-main \
   --title "feat(<scope>): <功能>" --body-file /tmp/pr.md
+
+# CI 绿后经 PR 合并；合并提交同样复用功能名（写 fork PR 号即可）
+gh pr checks <fork 号> -R graydovee/dsh-browser --watch --interval 15
+gh pr merge <fork 号> -R graydovee/dsh-browser --merge --delete-branch \
+  --subject "feat(<scope>): <功能> (#<fork 号>)"
 ```
 
 `main` 迭代较快（常有并行的上游 PR 导入）。开 PR 后到合并前反复追平，然后重跑门禁：
@@ -136,6 +144,7 @@ cp /tmp/install-info.backup.json ~/.dsh/browser-extension/install-info.json   # 
 - 用 `--ours` / `--theirs` 整体回退冲突文件（会吞掉另一侧内容）。
 - 为同一功能在上游 PR 再发一条补充评论；改为就地 `PATCH` 修正。
 - 直接 `git push` 到 `main`：只能通过 PR 合入（见 `AGENTS.md`《`main` 分支保护》）。
+- 给合并提交写 `merge:` 前缀或「同步承载分支」这类通用标题。
 
 ## 9. 收尾
 
